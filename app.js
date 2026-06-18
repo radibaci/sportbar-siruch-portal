@@ -10,17 +10,17 @@ const club = {
 };
 
 const currentUser = {
-  name: "Radim Bačík",
-  initials: "RB",
+  name: "Radim",
+  initials: "RA",
   credit: 1840,
-  paidCredit: 1740,
-  bonusCredit: 100,
+  paidCredit: 1840,
+  bonusCredit: 0,
   currency: "Kc",
   playerType: "club",
-  discount: 22,
-  baseDiscount: 18,
-  loyaltyDiscount: 4,
-  playedHours: 86,
+  discount: 18,
+  baseDiscount: 15,
+  loyaltyDiscount: 3,
+  playedHours: 74,
   nextLoyaltyHours: 100
 };
 
@@ -42,14 +42,20 @@ const state = {
 };
 
 const demoLoginAccounts = [
-  { email: "radim@siruch.cz", password: "siruch-radim", role: "player", persona: "radim", label: "Radim Bacik" },
-  { email: "petr@siruch.cz", password: "siruch-petr", role: "player", persona: "petr", label: "Petr Novak" },
-  { email: "jana@siruch.cz", password: "siruch-jana", role: "player", persona: "jana", label: "Jana Vesela" },
-  { email: "tomas@siruch.cz", password: "siruch-tomas", role: "player", persona: "tomas", label: "Tomas Cerny" },
-  { email: "karel@siruch.cz", password: "siruch-karel", role: "player", persona: "karel", label: "Karel Urban" },
-  { email: "spravce@siruch.cz", password: "siruch-admin", role: "admin", persona: "radim", label: "Spravce klubu" },
+  { email: "robin@siruch.cz", password: "siruch-robin", role: "player", persona: "robin", label: "Robin" },
+  { email: "bob@siruch.cz", password: "siruch-bob", role: "player", persona: "bob", label: "Bob" },
+  { email: "honza@siruch.cz", password: "siruch-honza", role: "player", persona: "honza", label: "Honza" },
+  { email: "marek@siruch.cz", password: "siruch-marek", role: "player", persona: "marek", label: "Marek" },
+  { email: "darek@siruch.cz", password: "siruch-darek", role: "player", persona: "darek", label: "Darek" },
+  { email: "filip@siruch.cz", password: "siruch-filip", role: "player", persona: "filip", label: "Filip" },
+  { email: "radim@siruch.cz", password: "siruch-radim", role: "player", persona: "radim", label: "Radim" },
+  { email: "zbyna@siruch.cz", password: "siruch-zbyna", role: "player", persona: "zbyna", label: "Zbyna" },
+  { email: "handa@siruch.cz", password: "siruch-handa", role: "player", persona: "handa", label: "Handa" },
+  { email: "prema@siruch.cz", password: "siruch-prema", role: "player", persona: "prema", label: "Prema" },
+  { email: "viki@siruch.cz", password: "siruch-viki", role: "player", persona: "viki", label: "Viki" },
+  { email: "spravce@siruch.cz", password: "siruch-admin", role: "admin", persona: "radim", label: "Spravce" },
   { email: "vypletac@siruch.cz", password: "siruch-vyplet", role: "stringer", persona: "radim", label: "Vypletac" },
-  { email: "obchod@siruch.cz", password: "siruch-obchod", role: "seller", persona: "radim", label: "Obchodnik" }
+  { email: "obchod@siruch.cz", password: "siruch-obchod", role: "seller", persona: "radim", label: "Obchod" }
 ];
 
 const days = ["Dnes", "Zitra", "St", "Ct", "Pa", "So", "Ne"];
@@ -64,9 +70,7 @@ const courts = [
     color: "#c66532",
     photo: courtPhoto,
     reservations: [
-      { start: "8:00", end: "9:30", title: "Trenink mladez", type: "busy" },
-      { start: "17:00", end: "18:30", title: "Moje ctyrhra", type: "mine", players: ["Radim", "Petr", "Jana", "Tomas"] },
-      { start: "19:00", end: "21:00", title: "Liga klubu", type: "busy" }
+      { start: "17:00", end: "19:00", title: "Patecni double", type: "mine", players: ["Radim", "Robin", "Bob", "Honza"] }
     ]
   },
   {
@@ -76,11 +80,7 @@ const courts = [
     surfaceClass: "hard-surface",
     color: "#2d79c7",
     photo: courtPhoto,
-    reservations: [
-      { start: "10:00", end: "11:00", title: "Dvouhra", type: "busy" },
-      { start: "16:30", end: "18:00", title: "Volna skupina", type: "group", players: ["Tomas", "Eva"] },
-      { start: "20:00", end: "21:00", title: "Rezervace", type: "busy" }
-    ]
+    reservations: []
   },
   {
     id: "c3",
@@ -89,10 +89,7 @@ const courts = [
     surfaceClass: "grass-surface",
     color: "#3d8f51",
     photo: courtPhoto,
-    reservations: [
-      { start: "9:30", end: "10:30", title: "Trener", type: "busy" },
-      { start: "18:30", end: "20:00", title: "Volno pro ctyrhru", type: "group", players: ["Petr"] }
-    ]
+    reservations: []
   },
   {
     id: "c4",
@@ -101,152 +98,357 @@ const courts = [
     surfaceClass: "clay-surface",
     color: "#c66532",
     photo: courtPhoto,
-    reservations: [
-      { start: "12:00", end: "13:00", title: "Udrzba", type: "busy" },
-      { start: "18:30", end: "20:30", title: "Turnajova priprava", type: "busy" }
-    ]
+    reservations: []
   }
 ];
 
 const players = [
   {
-    id: "petr",
-    name: "Petr Novak",
-    initials: "PN",
+    id: "robin",
+    name: "Robin",
+    initials: "RO",
     relation: "friend",
+    gender: "male",
     accountType: "club",
     accountLabel: "Klubovy hrac",
-    age: 41,
-    credit: 1260,
+    age: null,
+    credit: 1200,
     paidCredit: 1200,
-    bonusCredit: 60,
+    bonusCredit: 0,
+    discount: 10,
+    baseDiscount: 8,
+    loyaltyDiscount: 2,
+    playedHours: 42,
+    nextLoyaltyHours: 50,
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
+  },
+  {
+    id: "bob",
+    name: "Bob",
+    initials: "BO",
+    relation: "friend",
+    gender: "male",
+    accountType: "club",
+    accountLabel: "Klubovy hrac",
+    age: null,
+    credit: 1100,
+    paidCredit: 1100,
+    bonusCredit: 0,
+    discount: 8,
+    baseDiscount: 8,
+    loyaltyDiscount: 0,
+    playedHours: 21,
+    nextLoyaltyHours: 50,
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
+  },
+  {
+    id: "honza",
+    name: "Honza",
+    initials: "HO",
+    relation: "friend",
+    gender: "male",
+    accountType: "club",
+    accountLabel: "Klubovy hrac",
+    age: null,
+    credit: 980,
+    paidCredit: 980,
+    bonusCredit: 0,
+    discount: 8,
+    baseDiscount: 6,
+    loyaltyDiscount: 2,
+    playedHours: 36,
+    nextLoyaltyHours: 50,
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
+  },
+  {
+    id: "marek",
+    name: "Marek",
+    initials: "MA",
+    relation: "club",
+    gender: "male",
+    accountType: "club",
+    accountLabel: "Klubovy hrac",
+    age: null,
+    credit: 900,
+    paidCredit: 900,
+    bonusCredit: 0,
+    discount: 6,
+    baseDiscount: 6,
+    loyaltyDiscount: 0,
+    playedHours: 18,
+    nextLoyaltyHours: 50,
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
+  },
+  {
+    id: "darek",
+    name: "Darek",
+    initials: "DA",
+    relation: "club",
+    gender: "male",
+    accountType: "club",
+    accountLabel: "Klubovy hrac",
+    age: null,
+    credit: 850,
+    paidCredit: 850,
+    bonusCredit: 0,
+    discount: 6,
+    baseDiscount: 5,
+    loyaltyDiscount: 1,
+    playedHours: 28,
+    nextLoyaltyHours: 50,
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
+  },
+  {
+    id: "filip",
+    name: "Filip",
+    initials: "FI",
+    relation: "club",
+    gender: "male",
+    accountType: "club",
+    accountLabel: "Klubovy hrac",
+    age: null,
+    credit: 1450,
+    paidCredit: 1450,
+    bonusCredit: 0,
+    discount: 12,
+    baseDiscount: 10,
+    loyaltyDiscount: 2,
+    playedHours: 58,
+    nextLoyaltyHours: 100,
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
+  },
+  {
+    id: "radim",
+    name: "Radim",
+    initials: "RA",
+    relation: "friend",
+    gender: "male",
+    accountType: "club",
+    accountLabel: "Klubovy hrac",
+    age: null,
+    credit: 1840,
+    paidCredit: 1840,
+    bonusCredit: 0,
     discount: 18,
     baseDiscount: 15,
     loyaltyDiscount: 3,
     playedHours: 74,
     nextLoyaltyHours: 100,
-    discountReason: "Zakladni klubovy poplatek + pomoc pri priprave kurtu.",
-    seasonSpend: 6840,
-    seasonReservations: 28,
-    adminNote: "Spolehlivy, casto doplnuje ctyrhru. Nabizet jako nahradnika pro stredni uroven.",
-    invitedBy: "Radim, Jana",
-    level: "stredni uroven",
-    type: "ctyrhra",
-    time: "18:00",
-    reservationNeed: "Dnes 18:00-19:30, Kurt 3, chybi 1 hrac",
-    style: "spolehlivy hrac od zakladni cary",
-    tournaments: "Jarni ctyrhra 2025, Klubova liga 2026",
-    lastPlayed: "Hral jste spolu 4. 6. 2026 na Kurtu 1",
-    record: "12 zapasu v klubu, bilance 7-5"
-  },
-  {
-    id: "jana",
-    name: "Jana Vesela",
-    initials: "JV",
-    relation: "friend",
-    accountType: "credit",
-    accountLabel: "Kreditovy hrac",
-    age: 34,
-    credit: 920,
-    paidCredit: 920,
-    bonusCredit: 0,
-    discount: 8,
-    baseDiscount: 8,
-    loyaltyDiscount: 0,
-    playedHours: 31,
-    nextLoyaltyHours: 50,
-    discountReason: "Predplaceny kredit, bez rocniho kluboveho poplatku.",
-    seasonSpend: 3920,
-    seasonReservations: 16,
-    adminNote: "Chodi hlavne vecer, casto prijima pozvanky na dvouhru.",
-    invitedBy: "Petr, Radim",
-    level: "pokrocila",
-    type: "dvouhra",
-    time: "19:30",
-    reservationNeed: "Zitra 19:30-20:30, hleda dvouhru",
-    style: "rychla hra, dobry return",
-    tournaments: "Letni mix 2025, Zimni hala 2026",
-    lastPlayed: "Naposledy proti vam 21. 5. 2026",
-    record: "18 zapasu v klubu, bilance 13-5"
-  },
-  {
-    id: "radim",
-    name: "Radim Bačík",
-    initials: "RB",
-    relation: "club",
-    accountType: "club",
-    accountLabel: "Klubovy hrac",
-    age: 39,
-    credit: 1840,
-    paidCredit: 1740,
-    bonusCredit: 100,
-    discount: 22,
-    baseDiscount: 18,
-    loyaltyDiscount: 4,
-    playedHours: 86,
-    nextLoyaltyHours: 100,
-    discountReason: "Rocni klubovy prispevek + brigady pri jarnim otevreni.",
-    seasonSpend: 5180,
-    seasonReservations: 22,
-    adminNote: "Defaultni testovaci uzivatel. Preferuje ctyrhru a antuku.",
-    invitedBy: "Petr, Jana",
-    level: "rekreacni",
-    type: "ctyrhra",
-    time: "17:00",
-    reservationNeed: "Dnes 17:00-18:30, ctyrhra bez rezervace",
-    style: "klidne tempo, dobra ctyrhra",
-    tournaments: "Nedelni ctyrhra 2025",
-    lastPlayed: "Spoluhrac ve stale sestave",
-    record: "9 zapasu v klubu, bilance 5-4"
-  }
-];
-
-const guestProfiles = [
-  {
-    id: "host-608",
-    name: "Host 608 123 456",
-    initials: "H",
-    relation: "guest",
-    accountType: "guest",
-    accountLabel: "Host",
-    age: null,
-    credit: 0,
-    paidCredit: 0,
-    bonusCredit: 0,
-    discount: 0,
-    baseDiscount: 0,
-    loyaltyDiscount: 0,
-    playedHours: 4,
-    nextLoyaltyHours: 25,
-    discountReason: "Host ma pevne ceny bez individualni slevy.",
-    seasonSpend: 540,
-    seasonReservations: 3,
-    adminNote: "Povolit jen jednu aktivni rezervaci bez schvaleni.",
-    invitedBy: "Petr",
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
     level: "nezadano",
-    type: "host",
-    time: "20:00",
-    reservationNeed: "Dnes 20:00-21:00, platba QR zalohou",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
     style: "nezadano",
     tournaments: "zadne",
-    lastPlayed: "Naposledy jako host 2. 6. 2026",
-    record: "3 rezervace, 540 Kc utraceno"
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
+  },
+  {
+    id: "zbyna",
+    name: "Zbyna",
+    initials: "ZB",
+    relation: "club",
+    gender: "male",
+    accountType: "club",
+    accountLabel: "Klubovy hrac",
+    age: null,
+    credit: 760,
+    paidCredit: 760,
+    bonusCredit: 0,
+    discount: 5,
+    baseDiscount: 5,
+    loyaltyDiscount: 0,
+    playedHours: 14,
+    nextLoyaltyHours: 50,
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
+  },
+  {
+    id: "handa",
+    name: "Handa",
+    initials: "HA",
+    relation: "friend",
+    gender: "female",
+    accountType: "club",
+    accountLabel: "Klubovy hrac",
+    age: null,
+    credit: 1300,
+    paidCredit: 1300,
+    bonusCredit: 0,
+    discount: 10,
+    baseDiscount: 8,
+    loyaltyDiscount: 2,
+    playedHours: 46,
+    nextLoyaltyHours: 50,
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
+  },
+  {
+    id: "prema",
+    name: "Prema",
+    initials: "PR",
+    relation: "club",
+    gender: "male",
+    accountType: "club",
+    accountLabel: "Klubovy hrac",
+    age: null,
+    credit: 700,
+    paidCredit: 700,
+    bonusCredit: 0,
+    discount: 4,
+    baseDiscount: 4,
+    loyaltyDiscount: 0,
+    playedHours: 12,
+    nextLoyaltyHours: 50,
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
+  },
+  {
+    id: "viki",
+    name: "Viki",
+    initials: "VI",
+    relation: "friend",
+    gender: "female",
+    accountType: "club",
+    accountLabel: "Klubovy hrac",
+    age: null,
+    credit: 1180,
+    paidCredit: 1180,
+    bonusCredit: 0,
+    discount: 9,
+    baseDiscount: 8,
+    loyaltyDiscount: 1,
+    playedHours: 33,
+    nextLoyaltyHours: 50,
+    discountReason: "Testovaci klubovy hrac pro Sportbar Siruch.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Cisty testovaci profil bez stare historie.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie v nove testovaci sade.",
+    record: "0 zapasu v nove testovaci sade"
   }
 ];
 
-const extraPlayers = [
-  { id: "tomas", name: "Tomas Cerny", initials: "TC", relation: "club", accountType: "club", accountLabel: "Klubovy hrac", age: 45, credit: 760, paidCredit: 760, bonusCredit: 0, discount: 12, baseDiscount: 10, loyaltyDiscount: 2, playedHours: 52, nextLoyaltyHours: 100, discountReason: "Rocni prispevek, bez brigad.", seasonSpend: 4210, seasonReservations: 19, adminNote: "Casto hraje po praci, vhodny pro last minute.", invitedBy: "Petr", level: "stredni", type: "ctyrhra", time: "18:30", reservationNeed: "Volny na doplneni ctyrhry", style: "rychle voleje", tournaments: "Klubova liga 2026", lastPlayed: "Hral s Radimem 29. 5.", record: "15 zapasu, bilance 8-7" },
-  { id: "eva", name: "Eva Kralova", initials: "EK", relation: "club", accountType: "credit", accountLabel: "Kreditovy hrac", age: 29, credit: 1320, paidCredit: 1200, bonusCredit: 120, discount: 6, baseDiscount: 5, loyaltyDiscount: 1, playedHours: 28, nextLoyaltyHours: 50, discountReason: "Vyssi dobiti kreditu.", seasonSpend: 2860, seasonReservations: 11, adminNote: "Zajima se o treninky a test bot.", invitedBy: "Jana", level: "zacatecnik+", type: "dvouhra", time: "17:30", reservationNeed: "Hleda podobnou uroven", style: "pracuje na technice", tournaments: "zadne", lastPlayed: "Trenink 8. 6.", record: "6 zapasu, bilance 2-4" },
-  { id: "karel", name: "Karel Urban", initials: "KU", relation: "club", accountType: "club", accountLabel: "Klubovy hrac", age: 52, credit: 2140, paidCredit: 2000, bonusCredit: 140, discount: 20, baseDiscount: 16, loyaltyDiscount: 4, playedHours: 91, nextLoyaltyHours: 100, discountReason: "Prispevek + pravidelne brigady.", seasonSpend: 7320, seasonReservations: 31, adminNote: "Vazeny hrac, zohlednit v anketach sortimentu.", invitedBy: "Radim", level: "pokrocily", type: "ctyrhra", time: "16:00", reservationNeed: "Stala sestava streda", style: "silny servis", tournaments: "Jarni ctyrhra 2026", lastPlayed: "Liga 5. 6.", record: "21 zapasu, bilance 15-6" },
-  { id: "lucie", name: "Lucie Horakova", initials: "LH", relation: "club", accountType: "credit", accountLabel: "Kreditovy hrac", age: 37, credit: 540, paidCredit: 540, bonusCredit: 0, discount: 4, baseDiscount: 4, loyaltyDiscount: 0, playedHours: 18, nextLoyaltyHours: 25, discountReason: "Zakladni kredit bez clenstvi.", seasonSpend: 1980, seasonReservations: 8, adminNote: "Posilat nabidky treninku mimo spicku.", invitedBy: "Jana", level: "rekreacni", type: "dvouhra", time: "15:00", reservationNeed: "Muze dopoledne", style: "jista hra", tournaments: "zadne", lastPlayed: "Dvouhra 3. 6.", record: "5 zapasu, bilance 3-2" },
-  { id: "milan", name: "Milan Svec", initials: "MS", relation: "club", accountType: "club", accountLabel: "Klubovy hrac", age: 48, credit: 340, paidCredit: 340, bonusCredit: 0, discount: 10, baseDiscount: 10, loyaltyDiscount: 0, playedHours: 23, nextLoyaltyHours: 25, discountReason: "Zakladni klubovy poplatek.", seasonSpend: 2460, seasonReservations: 10, adminNote: "Casto kupuje mice, vhodny pro spotrebni balicky.", invitedBy: "Tomas", level: "stredni", type: "ctyrhra", time: "19:00", reservationNeed: "Doplneni ctyrhry", style: "aktivni u site", tournaments: "Klubova liga 2025", lastPlayed: "Ctyrhra 1. 6.", record: "9 zapasu, bilance 4-5" },
-  { id: "ondrej", name: "Ondrej Marek", initials: "OM", relation: "club", accountType: "guest", accountLabel: "Host", age: 26, credit: 0, paidCredit: 0, bonusCredit: 0, discount: 0, baseDiscount: 0, loyaltyDiscount: 0, playedHours: 7, nextLoyaltyHours: 25, discountReason: "Host ma pevne ceny.", seasonSpend: 960, seasonReservations: 4, adminNote: "Motivovat k zalozeni kreditu.", invitedBy: "Eva", level: "zacatecnik", type: "dvouhra", time: "20:00", reservationNeed: "Obcasny host", style: "ucici se hrac", tournaments: "zadne", lastPlayed: "Host 7. 6.", record: "4 rezervace" },
-  { id: "filip", name: "Filip Dvorak", initials: "FD", relation: "club", accountType: "club", accountLabel: "Klubovy hrac", age: 32, credit: 1580, paidCredit: 1500, bonusCredit: 80, discount: 15, baseDiscount: 13, loyaltyDiscount: 2, playedHours: 58, nextLoyaltyHours: 100, discountReason: "Clenstvi + caste hrani.", seasonSpend: 5120, seasonReservations: 24, adminNote: "Pokrocily hrac, hlidat vyplet po 30 dnech.", invitedBy: "Karel", level: "pokrocily", type: "dvouhra", time: "18:00", reservationNeed: "Hleda silnejsi soupere", style: "agresivni baseline", tournaments: "Letni liga 2026", lastPlayed: "Dvouhra 10. 6.", record: "14 zapasu, bilance 10-4" }
-];
+const guestProfiles = [];
 
-players.push(...extraPlayers);
-
-const adminPlayerDirectory = [...players, ...guestProfiles];
+const adminPlayerDirectory = [...players];
 
 let courtPriceRules = [
   { court: "c1", days: "Po-Pa", start: "8:00", end: "15:00", price: 160 },
@@ -258,43 +460,7 @@ let courtPriceRules = [
   { court: "c4", days: "So-Ne", start: "9:00", end: "20:00", price: 230 }
 ];
 
-const events = [
-  {
-    id: "rackets",
-    thumbnail: "rackets",
-    status: "published",
-    date: "So",
-    title: "Testovani raket Wilson",
-    meta: "10:00-14:00, kurty 3 a 4",
-    detail: "Volne testovani raket, bot a vypletu. Klub zajisti meric rychlosti podani a poradce pro vyber rakety.",
-    fee: "Zdarma",
-    registered: ["Radim", "Jana", "Petr"]
-  },
-  {
-    id: "doubles",
-    thumbnail: "doubles",
-    status: "published",
-    date: "Ne",
-    title: "Turnaj ctyrher",
-    meta: "Registrace do patku, max. 16 paru",
-    detail: "Klubovy turnaj ctyrher pro rekreacni a stredni uroven. Skupiny, semifinale a finale podle poctu paru.",
-    fee: "Startovne 250 Kc / hrac",
-    registered: ["Petr + Radim", "Jana + Eva", "Tomas + Karel"],
-    history: "2025: Novak / Cerny, 2024: Vesela / Horakova",
-    aiNote: "Vysledky muze zapsat poradatel nebo AI bot ze skore zapasu."
-  },
-  {
-    id: "shoes",
-    thumbnail: "shoes",
-    status: "published",
-    date: "Ct",
-    title: "Nova kolekce obuvi",
-    meta: "Predvadeci akce v klubovne",
-    detail: "Ukazka tenisove obuvi a obleceni pro antuku, umely povrch i travu.",
-    fee: "Zdarma",
-    registered: ["Eva", "Karel"]
-  }
-];
+const events = [];
 
 const eventThumbnails = [
   { id: "rackets", label: "Testovani raket", image: "assets/club-shop-hero.png" },
@@ -304,117 +470,19 @@ const eventThumbnails = [
   { id: "shop", label: "Klubovy obchod", image: "assets/club-shop-hero.png" }
 ];
 
-const tournaments = [
-  {
-    id: "single-summer-2026",
-    title: "Letni single liga SportBar",
-    type: "single",
-    status: "registration",
-    date: "29.6. 9:00",
-    deadline: "26.6. 20:00",
-    courts: ["Kurt 1", "Kurt 2", "Kurt 3"],
-    maxPlayers: 16,
-    entryFee: "250 Kc",
-    rules: "Skupiny kazdy s kazdym, set do 6, za stavu 6:6 tie-break, pavouk po skupinach.",
-    participants: ["Radim Bacik", "Petr Novak", "Jana Vesela", "Tomas Cerny", "Karel Urban", "Eva Kralova", "Filip Dvorak", "Milan Svec"],
-    groups: [],
-    matches: [],
-    knockout: [],
-    history: ""
-  }
-];
+const tournaments = [];
 
 function eventThumbnail(id = "rackets") {
   return eventThumbnails.find((item) => item.id === id) || eventThumbnails[0];
 }
 
-const payments = [
-  { title: "Kurt 1, ctyrhra", date: "4. 6. 2026", amount: "320 Kc", status: "Zaplaceno QR" },
-  { title: "Turnaj ctyrher", date: "1. 6. 2026", amount: "250 Kc", status: "Ceka na platbu" }
-];
+const payments = [];
 
-const notifications = [
-  { id: "attendance-radim-main", type: "attendance", recipients: ["radim"], title: "Pripomenuti hry", meta: "Pondeli 17:00, Kurt 1, trvala ctyrhra", status: "Tvoje ucast potvrzena", reservationIndex: 0 },
-  { id: "attendance-petr-main", type: "attendance", recipients: ["petr"], title: "Potvrdit ucast", meta: "Pondeli 17:00, Kurt 1, trvala ctyrhra", status: "Ceka na tebe", reservationIndex: 0 },
-  { id: "attendance-jana-main", type: "attendance", recipients: ["jana"], title: "Potvrdit ucast", meta: "Pondeli 17:00, Kurt 1, trvala ctyrhra", status: "Ceka na tebe", reservationIndex: 0 },
-  { id: "replacement-radim-ne", type: "replacement", recipients: ["radim", "petr", "tomas"], title: "Jana se omluvila", meta: "System nasel Karla jako nahradnika do nedele 18:00", status: "Hlasovani", reservationIndex: 3 },
-  { id: "counter-jana-radim", type: "invite", recipients: ["radim"], title: "Pozvanka na hru", meta: "Jana muze v 18:30, navrhuje posun o 1 hodinu", status: "Protinavrh", proposalIndex: 1 },
-  { id: "invite-karel-ne", type: "invite", recipients: ["karel"], title: "Pozvanka jako nahradnik", meta: "Nedele 18:00, Kurt 2, ctyrhra potrebuje jednoho", status: "Muzes potvrdit", reservationIndex: 3 },
-  { id: "stringing-ready-radim-1", type: "stringing-ready", recipients: ["radim"], title: "Vyplet je hotovy", meta: "Vyplet je hotovy, muzete si raketu vyzvednout pred hrou Pondeli 15.6. 17:00 na recepci.", status: "k vyzvednuti", stringingId: "stringing-radim-1" }
-];
+const notifications = [];
 
-const gameProposals = [
-  {
-    id: "proposal-friday-radim",
-    ownerId: "radim",
-    title: "Patek 17:00-18:30",
-    court: "Kurt 1 · Antuka",
-    sentTo: [
-      { name: "Petr", initials: "PN", playerId: "petr", status: "confirmed" },
-      { name: "Jana", initials: "JV", playerId: "jana", status: "pending" },
-      { name: "Tomas", initials: "TC", playerId: "tomas", status: "pending" }
-    ],
-    state: "Ceka se na Janu",
-    note: "Kdyz potvrdi 3 hraci, vytvori se rezervace a zapise se do kalendare."
-  },
-  {
-    id: "proposal-saturday-jana",
-    ownerId: "jana",
-    title: "Sobota 9:30-11:00",
-    court: "Kurt 3 · Trava",
-    sentTo: [
-      { name: "Radim", initials: "RB", playerId: "radim", status: "counter" },
-      { name: "Petr", initials: "PN", playerId: "petr", status: "pending" }
-    ],
-    state: "Protinavrh: Jana muze od 10:30",
-    note: "Po dohode se stary navrh smaze nebo nahradi novym terminem."
-  },
-  {
-    id: "proposal-sunday-petr",
-    ownerId: "petr",
-    title: "Nedele 18:00-20:00",
-    court: "Kurt 2 · Umele",
-    sentTo: [
-      { name: "Radim", initials: "RB", playerId: "radim", status: "confirmed" },
-      { name: "Jana", initials: "JV", playerId: "jana", status: "declined" },
-      { name: "Karel", initials: "KU", playerId: "karel", status: "pending" }
-    ],
-    state: "Radim potvrdil, Jana nemuze, Petr jeste nereagoval",
-    note: "Pokud Petr nepotvrdi, muzes hledani zverejnit na portalu."
-  },
-  {
-    id: "proposal-tuesday-radim",
-    ownerId: "radim",
-    title: "Utery 7:30-8:30",
-    court: "Kurt 3 · Trava",
-    sentTo: [
-      { name: "Eva", initials: "EK", playerId: "eva", status: "pending" }
-    ],
-    state: "Domluveno, rezervace se vytvori po potvrzeni platby",
-    note: "Po odehrani se navrh presune do historie rezervaci."
-  }
-];
+const gameProposals = [];
 
-const reservationHistory = [
-  {
-    date: "7. 6. 2026",
-    court: "Kurt 1 · Antuka",
-    time: "17:00-18:30",
-    players: "Radim + Petr vs Jana + Tomas",
-    score: "6:4, 4:6, 10:7",
-    result: "Vyhra",
-    photos: "2 fotky zapasu"
-  },
-  {
-    date: "31. 5. 2026",
-    court: "Kurt 1 · Antuka",
-    time: "17:00-18:30",
-    players: "Radim + Petr vs Jana + Tomas",
-    score: "3:6, 4:6",
-    result: "Prohra",
-    photos: "Bez fotek"
-  }
-];
+const reservationHistory = [];
 
 const motivation = {
   afterWin: "Ted jim to nandame znovu.",
@@ -437,77 +505,20 @@ const motivationLines = [
 
 const personalReservations = [
   {
-    day: "Po",
-    date: "15",
+    id: "fri-double-1700",
+    day: "Pa",
+    date: "19",
     start: "17:00",
-    end: "18:30",
-    kind: "Trvala",
+    end: "19:00",
+    kind: "Jednorazova",
     gameType: "double",
     court: courts[0],
-    players: ["Radim", "Petr", "Jana", "Tomas"],
+    players: ["Radim", "Robin", "Bob", "Honza"],
     attendance: [
-      { name: "Radim", initials: "RB", playerId: "radim", gender: "male", status: "active", role: "hraje" },
-      { name: "Petr", initials: "PN", playerId: "petr", gender: "male", status: "pending", role: "ceka na potvrzeni" },
-      { name: "Jana", initials: "JV", playerId: "jana", gender: "female", status: "pending", role: "ceka na potvrzeni" },
-      { name: "Tomas", initials: "TC", playerId: "tomas", gender: "male", status: "confirmed", role: "potvrdil" }
-    ]
-  },
-  {
-    day: "St",
-    date: "17",
-    start: "19:00",
-    end: "20:00",
-    kind: "Jednorazova",
-    gameType: "single",
-    court: courts[2],
-    players: ["Radim", "Jana"],
-    attendance: [
-      { name: "Radim", initials: "RB", playerId: "radim", gender: "male", status: "active", role: "hraje" },
-      { name: "Jana", initials: "JV", playerId: "jana", gender: "female", status: "pending", role: "ceka na potvrzeni" }
-    ]
-  },
-  {
-    day: "So",
-    date: "20",
-    start: "9:30",
-    end: "11:30",
-    kind: "Turnaj",
-    gameType: "single",
-    court: courts[3],
-    players: ["Radim", "Petr"],
-    attendance: [
-      { name: "Radim", initials: "RB", playerId: "radim", gender: "male", status: "active", role: "hraje" },
-      { name: "Petr", initials: "PN", playerId: "petr", gender: "male", status: "confirmed", role: "potvrdil" }
-    ]
-  },
-  {
-    day: "Ne",
-    date: "21",
-    start: "18:00",
-    end: "20:00",
-    kind: "Jednorazova",
-    gameType: "double",
-    court: courts[1],
-    players: ["Radim", "Petr", "Tomas", "Karel", "Jana"],
-    attendance: [
-      { name: "Radim", initials: "RB", playerId: "radim", gender: "male", status: "active", role: "hraje" },
-      { name: "Petr", initials: "PN", playerId: "petr", gender: "male", status: "confirmed", role: "potvrdil" },
-      { name: "Tomas", initials: "TC", playerId: "tomas", gender: "male", status: "confirmed", role: "potvrdil" },
-      { name: "Karel", initials: "KU", playerId: "karel", gender: "male", status: "replacement", role: "nahradnik za Janu" },
-      { name: "Jana", initials: "JV", playerId: "jana", gender: "female", status: "declined", role: "nemuze" }
-    ]
-  },
-  {
-    day: "Ut",
-    date: "23",
-    start: "7:30",
-    end: "8:30",
-    kind: "Trenink",
-    gameType: "single",
-    court: courts[2],
-    players: ["Radim"],
-    attendance: [
-      { name: "Radim", initials: "RB", playerId: "radim", gender: "male", status: "active", role: "hraje" }
+      { name: "Radim", initials: "RA", playerId: "radim", gender: "male", status: "active", role: "hraje" },
+      { name: "Robin", initials: "RO", playerId: "robin", gender: "male", status: "confirmed", role: "potvrdil" },
+      { name: "Bob", initials: "BO", playerId: "bob", gender: "male", status: "confirmed", role: "potvrdil" },
+      { name: "Honza", initials: "HO", playerId: "honza", gender: "male", status: "confirmed", role: "potvrdil" }
     ]
   }
 ];
@@ -526,17 +537,10 @@ const adminTasks = [
 ];
 
 const adminReservations = [
-  { time: "7:30-8:30", court: "Kurt 3", surface: "Trava", owner: "Radim Bačík", status: "Zaplaceno", players: "1/2", tone: "good" },
-  { time: "17:00-18:30", court: "Kurt 1", surface: "Antuka", owner: "Stala ctyrhra", status: "Chybi Jana", players: "3/4", tone: "warn" },
-  { time: "18:30-20:00", court: "Kurt 3", surface: "Trava", owner: "Petr Novak", status: "Hleda hrace", players: "2/4", tone: "search" },
-  { time: "20:00-21:00", court: "Kurt 2", surface: "Umele", owner: "Host", status: "Ceka QR", players: "2/2", tone: "warn" }
+  { reservationId: "fri-double-1700", time: "Pa 17:00-19:00", court: "Kurt 1", surface: "Antuka", owner: "Radim", status: "Plna sestava", players: "4/4", tone: "good" }
 ];
 
-const adminPayments = [
-  { player: "Petr Novak", item: "Turnaj ctyrher", amount: "250 Kc", status: "Ceka" },
-  { player: "Radim Bačík", item: "Kurt 1, ctyrhra", amount: "320 Kc", status: "Zaplaceno" },
-  { player: "Host: 608 123 456", item: "Kurt 2, 20:00", amount: "180 Kc", status: "QR zaloha" }
-];
+const adminPayments = [];
 
 const courtUtilization = [
   { court: "Kurt 1", surface: "Antuka", utilization: 84, free: "20:30-22:00", revenue: 2840, tone: "good" },
@@ -545,11 +549,7 @@ const courtUtilization = [
   { court: "Kurt 4", surface: "Antuka", utilization: 69, free: "18:30-20:00", revenue: 1980, tone: "warn" }
 ];
 
-const lastMinuteSuggestions = [
-  { player: "Petr Novak", initials: "PN", court: "Kurt 3", time: "Dnes 14:30", reason: "hraje casto v utery, ma kredit a bere travu", offer: "bonus 60 Kc do kreditu" },
-  { player: "Jana Vesela", initials: "JV", court: "Kurt 2", time: "Dnes 15:30", reason: "ma rada dvouhru po praci, muze poslat protinavrh", offer: "mimo spicku -15 %" },
-  { player: "Radim Bačík", initials: "RB", court: "Kurt 4", time: "Dnes 18:30", reason: "chodi na ctyrhru a casto doplnuje podobnou uroven", offer: "pozvanka bez slevy" }
-];
+const lastMinuteSuggestions = [];
 
 const creditBonusRules = [
   { name: "Dobiti 3 000 Kc", paid: 3000, bonus: 100, note: "bonusovy kredit, cena kurtu zustava podle sazby a slevy hrace" },
@@ -601,33 +601,9 @@ const salesCampaigns = [
   }
 ];
 
-const productPollItems = [
-  { product: "Babolat Pure Drive", category: "raketa", votes: 14, weighted: 31, vipWish: "Radim chce testovat grip 3", logistics: "demo kusy 2x" },
-  { product: "Wilson Blade", category: "raketa", votes: 12, weighted: 24, vipWish: "Petr hlasoval, vysoka utrata", logistics: "demo kus + akce vyplet" },
-  { product: "Asics Gel Resolution", category: "boty", votes: 9, weighted: 22, vipWish: "Jana chce velikost 39", logistics: "velikosti 38-42" },
-  { product: "Klubove tricko premium", category: "obleceni", votes: 4, weighted: 18, vipWish: "jediny VIP pozadavek, privezt i tak", logistics: "S-XL + predobjednavka" }
-];
+const productPollItems = [];
 
-const clubPolls = [
-  {
-    id: "poll-testing-june",
-    title: "Co chcete otestovat na kurtech?",
-    question: "Vyber, co ma klub domluvit s dodavatelem pro dalsi testovaci akci.",
-    status: "active",
-    start: "15.6.",
-    end: "18.6.",
-    reminder: "1x denne push zprava hracum bez hlasu",
-    options: [
-      { id: "babolat", label: "A - rakety Babolat", category: "rakety", votes: ["radim", "karel"], weighted: 7, logistics: "demo rakety grip 2-4" },
-      { id: "wilson-rackets", label: "B - rakety Wilson", category: "rakety", votes: ["petr"], weighted: 4, logistics: "Blade + Clash demo sada" },
-      { id: "wilson-shoes", label: "C - boty Wilson", category: "boty", votes: ["jana", "eva"], weighted: 5, logistics: "velikosti podle profilu hracu" },
-      { id: "shirts", label: "D - tricka Nike / Puma", category: "obleceni", votes: [], weighted: 0, logistics: "S-XL, VIP kusy i pro malo hlasu" }
-    ],
-    supplierNote: "Dodavatel priveze jen top volby + VIP vyjimky podle aktivity hracu.",
-    cadence: "Max. 1 vetsi testovaci akce za 4-6 tydnu, mezi tim mensi servisni nabidky.",
-    createdEventId: ""
-  }
-];
+const clubPolls = [];
 
 const clubShopItems = [
   { title: "Mice na pristi hru", type: "rychly nakup", price: "od 169 Kc", delivery: "vyzvednuti na baru", note: "nejlevnejsi stale zbozi pro klub" },
@@ -636,45 +612,9 @@ const clubShopItems = [
   { title: "Raketa na test", type: "testovaci kus", price: "zalohou z kreditu", delivery: "test pri rezervaci", note: "vratka po hre, koupe se zlevou" }
 ];
 
-const playerOrders = [
-  { player: "Radim Bačík", product: "Vyplet rakety", type: "sluzba", status: "pred pristi rezervaci", reservation: "Patek 17:00", batch: "servisni sber 3 rakety", value: 390 },
-  { player: "Petr Novak", product: "Tenisaky Head Tour", type: "spotrebni", status: "ceka na balicek", reservation: "Utery 18:00", batch: "mice + ponozky 7 ks", value: 169 },
-  { player: "Jana Vesela", product: "Asics boty 39", type: "demo", status: "pridat do akce", reservation: "Ctvrtek 18:30", batch: "boty demo sada", value: 0 },
-  { player: "Tomas Cerny", product: "Ponozky 3 pack", type: "spotrebni", status: "nabidnout po hre", reservation: "Dnes 19:00", batch: "maly klubovy balik", value: 249 }
-];
+const playerOrders = [];
 
-const stringingOrders = [
-  {
-    id: "stringing-radim-1",
-    player: "Radim Bacik",
-    playerId: "radim",
-    racket: "Wilson Blade 98",
-    string: "Wilson Sensation",
-    tension: "24 / 23 kg",
-    status: "ready_for_pickup",
-    statusLabel: "hotovo na recepci",
-    reservation: "Pondeli 15.6. 17:00",
-    handoff: "recepce",
-    due: "Pondeli 15.6. pred hrou",
-    note: "Stejne jako minule, komfortni vyplet.",
-    message: "Vyplet je hotovy, muzete si raketu vyzvednout pred hrou Pondeli 15.6. 17:00 na recepci."
-  },
-  {
-    id: "stringing-filip-1",
-    player: "Filip Dvorak",
-    playerId: "filip",
-    racket: "Babolat Pure Drive",
-    string: "RPM Blast",
-    tension: "25 kg",
-    status: "with_stringer",
-    statusLabel: "u vypletace",
-    reservation: "Streda 17.6. 18:00",
-    handoff: "vypletac",
-    due: "Streda 17.6. do 17:30",
-    note: "Pokrocily hrac, chce vic kontroly.",
-    message: ""
-  }
-];
+const stringingOrders = [];
 
 const productNudges = [
   { trigger: "pred rezervaci", message: "Mas vypleteno? Chces raketu odevzdat pred hrou a mit ji hotovou na dalsi rezervaci?" },
@@ -696,11 +636,7 @@ const specialOccupancyTypes = [
   { type: "service", label: "Vypletani", color: "#1f684e", note: "servisni okno bez bezne rezervace" }
 ];
 
-const habitAlerts = [
-  { player: "Petr Novak", initials: "PN", habit: "utery 14:00-16:00", free: "Kurt 3 dnes 14:30", message: "Dnes je volny tvuj obvykly cas na trave." },
-  { player: "Jana Vesela", initials: "JV", habit: "ctvrtek po 18:00", free: "Kurt 2 ctvrtek 18:30", message: "Mas volne okno v case, kdy casto hrajes dvouhru." },
-  { player: "Radim Bačík", initials: "RB", habit: "patek 17:00 ctyrhra", free: "Kurt 1 patek 17:00", message: "Stala sestava se blizi, potvrzeni ucasti poslat den predem." }
-];
+const habitAlerts = [];
 
 const content = document.querySelector("#appContent");
 const modalBackdrop = document.querySelector("#modalBackdrop");
@@ -708,7 +644,7 @@ const modalContent = document.querySelector("#modalContent");
 const modalClose = document.querySelector("#modalClose");
 const toast = document.querySelector("#toast");
 const STORAGE_KEY = "tennis-club-portal-state-v1";
-const DEMO_VERSION = 51;
+const DEMO_VERSION = 52;
 
 function replaceArray(target, source) {
   if (!Array.isArray(source)) return;
@@ -855,7 +791,7 @@ function normalizeAttendancePlayer(player) {
     playerId: player.playerId || record.id || (player.initials === "RB" ? "radim" : undefined),
     name: fullName,
     initials: player.initials === "TH" ? "TC" : (player.initials || record.initials || ""),
-    gender: player.gender || record.gender || (["Jana", "Eva", "Lucie"].some((name) => fullName.includes(name)) ? "female" : "male")
+    gender: player.gender || record.gender || (["Handa", "Viki"].some((name) => fullName.includes(name)) ? "female" : "male")
   };
 }
 
@@ -889,8 +825,8 @@ function reservationGameLabel(reservation) {
 
 function suggestedReplacementId(reservation, declinedPlayerId) {
   const used = new Set(normalizedAttendance(reservation).map((player) => player.playerId));
-  const preferred = ["karel", "filip", "eva", "milan", "lucie", "ondrej", "petr", "tomas", "jana", "radim"];
-  return preferred.find((id) => id !== declinedPlayerId && !used.has(id)) || "karel";
+  const preferred = ["filip", "marek", "darek", "zbyna", "prema", "handa", "viki", "robin", "bob", "honza", "radim"];
+  return preferred.find((id) => id !== declinedPlayerId && !used.has(id)) || "filip";
 }
 
 function startReplacementVote(reservationIndex, declinedPlayerId) {
@@ -1371,7 +1307,7 @@ function createSingleTournamentFromModal() {
     maxPlayers,
     entryFee: "250 Kc",
     rules: "Skupiny kazdy s kazdym, potom pavouk.",
-    participants: ["Radim Bacik", "Petr Novak", "Jana Vesela", "Tomas Cerny"],
+    participants: ["Radim", "Robin", "Bob", "Honza"],
     groups: [],
     matches: [],
     knockout: [],
@@ -1778,7 +1714,7 @@ function saveAdminOrder(product, player) {
 }
 
 function friendOptions(preselected = "") {
-  const friends = players.filter((player) => player.relation === "friend" || ["karel", "tomas", "eva", "lucie"].includes(player.id));
+  const friends = players.filter((player) => player.relation === "friend" || ["filip", "marek", "darek", "handa", "viki"].includes(player.id));
   return friends
     .filter((player) => player.id !== currentPersonaId())
     .map((player) => `
@@ -1873,7 +1809,7 @@ function invitedPlayerIdsForContext({ eventId = "", proposalId = "" } = {}) {
 
 function friendOptions(preselected = "", context = {}) {
   const alreadyInvited = invitedPlayerIdsForContext(context);
-  const friends = players.filter((player) => player.relation === "friend" || ["karel", "tomas", "eva", "lucie"].includes(player.id));
+  const friends = players.filter((player) => player.relation === "friend" || ["filip", "marek", "darek", "handa", "viki"].includes(player.id));
   return friends
     .filter((player) => player.id !== currentPersonaId() && (player.id === preselected || !alreadyInvited.has(player.id)))
     .map((player) => `
@@ -2594,7 +2530,7 @@ function attendanceFromPlayerId(playerId, status = "confirmed", role = "potvrdil
     name: (record.name || "").split(" ")[0],
     initials: record.initials,
     playerId,
-    gender: ["jana", "eva", "lucie"].includes(playerId) ? "female" : "male",
+    gender: ["handa", "viki"].includes(playerId) ? "female" : "male",
     status,
     role
   };
@@ -3211,7 +3147,7 @@ function reservationCard(reservation) {
       </div>
       <span class="reservation-state">${reservationLabel}</span>
       <div class="team-strip compact-team">
-        ${attendance.map((player, index) => `<button class="avatar tiny-avatar status-${player.status}" title="${player.name}: ${player.role}" data-action="player-detail" data-player="${player.initials === "RB" ? "radim" : players[index - 1]?.id || "petr"}">${player.initials}</button>`).join("")}
+        ${attendance.map((player) => `<button class="avatar tiny-avatar status-${player.status}" title="${player.name}: ${player.role}" data-action="player-detail" data-player="${player.playerId || "radim"}">${player.initials}</button>`).join("")}
       </div>
       ${attendance.some((player) => player.status === "replacement") ? `<small class="reservation-photo-note">Nahradnik je zeleny navic pouze jako nahrada za cerveneho hrace, ne jako paty aktivni hrac.</small>` : ""}
       <p class="motivation">${reservation.kind === "Trvala" ? motivation.afterLoss : motivation.afterWin}</p>
@@ -3519,7 +3455,7 @@ function playerList(items, className = "") {
   return `
     <div class="player-list ${className}">
       ${items.map((player) => `
-        <button class="player-row row-button ${["Jana", "Eva", "Lucie"].some((name) => player.name.includes(name)) ? "player-female" : "player-male"}" data-action="player-detail" data-player="${player.id}">
+        <button class="player-row row-button ${["Handa", "Viki"].some((name) => player.name.includes(name)) ? "player-female" : "player-male"}" data-action="player-detail" data-player="${player.id}">
           <span class="avatar ${player.relation === "friend" ? "friend-avatar" : ""}">${player.initials}${player.relation === "friend" ? "<i>♢</i>" : ""}</span>
           <span>
             <strong>${player.name}</strong>
@@ -3558,12 +3494,12 @@ function renderEvents() {
         <div class="history-list">
           <article class="history-card">
             <strong>Jarni ctyrhra 2026</strong>
-            <small>Vitezove: Novak / Cerny · Finale 7:5, 6:4</small>
+            <small>Vitezove: Robin / Bob · Finale 7:5, 6:4</small>
             <p>Fotky: 18 · YouTube: zaznam finale</p>
           </article>
           <article class="history-card">
             <strong>Zimni liga 2025</strong>
-            <small>Vitez: Jana Vesela · 24 odehranych zapasu</small>
+            <small>Vitez: Viki · 24 odehranych zapasu</small>
             <p>Fotky: 9 · YouTube: highlights</p>
           </article>
         </div>
@@ -5042,7 +4978,7 @@ function joinSlotModal(data) {
   const join = slotJoinState(data);
   const attendance = join.reservation
     ? normalizedAttendance(join.reservation).filter((player) => player.status !== "declined").map((player) => player.name).join(", ")
-    : (join.slot?.players || ["Petr", "Jana", "Radim"]).join(", ");
+    : (join.slot?.players || ["Robin", "Bob", "Radim"]).join(", ");
   const end = join.slot?.end || minutesToTime(timeToMinutes(data.time || "18:30") + 90);
   return `
     <div class="modal-body">
@@ -5245,7 +5181,7 @@ function remindModal() {
       </div>
       <div class="profile-list">
         <div class="profile-row"><span>Rezervace</span><span>Patek 17:00-18:30, Kurt 1</span></div>
-        <div class="profile-row"><span>Komu</span><span>Radim, Petr, Jana, Tomas</span></div>
+        <div class="profile-row"><span>Komu</span><span>Radim, Robin, Bob, Honza</span></div>
         <div class="profile-row"><span>Text</span><span>Zitra hrajeme. Potvrdte ucast.</span></div>
       </div>
       <button class="primary-button" data-confirm="remind">Poslat upozorneni</button>
@@ -5285,9 +5221,9 @@ function replacementModal() {
       </div>
       <div class="tournament-table">
         <div class="table-head"><span>Kandidat</span><span>Hlasy</span></div>
-        <div class="table-row"><span>Tomas Hruby</span><span>2</span></div>
-        <div class="table-row"><span>Eva Mala</span><span>1</span></div>
-        <div class="table-row"><span>Karel Dvorak</span><span>0</span></div>
+        <div class="table-row"><span>Marek</span><span>2</span></div>
+        <div class="table-row"><span>Handa</span><span>1</span></div>
+        <div class="table-row"><span>Darek</span><span>0</span></div>
       </div>
       <button class="primary-button" data-confirm="replacement">Vybrat nejhlasovanejsiho</button>
     </div>
@@ -5423,7 +5359,7 @@ function notificationDetailModal(data = {}) {
     `;
   }
   if (item?.type === "replacement") {
-    const candidate = playerRecordById(item.candidateId) || playerRecordById("karel");
+    const candidate = playerRecordById(item.candidateId) || playerRecordById("filip");
     const reservation = personalReservations[item.reservationIndex || 0] || personalReservations[0];
     return `
       <div class="modal-body">
@@ -5726,7 +5662,7 @@ function adminInviteModal(data) {
         <p class="muted">Spravce muze poslat cilene pozvani hraci, ktery podle historie pravdepodobne prijde.</p>
       </div>
       <div class="profile-list">
-        <div class="profile-row"><span>Hrac</span><span>${data.player || "Petr Novak"}</span></div>
+        <div class="profile-row"><span>Hrac</span><span>${data.player || "Robin"}</span></div>
         <div class="profile-row"><span>Kurt</span><span>${data.court || "Kurt 3"}</span></div>
         <div class="profile-row"><span>Termin</span><span>${data.time || "Dnes 14:30"}</span></div>
         <div class="profile-row"><span>Nabidka</span><span>cilena, bez verejneho casovace, maximalne parkrat za mesic</span></div>
@@ -5735,7 +5671,7 @@ function adminInviteModal(data) {
         <div class="field"><label>Zprava</label><textarea>Ahoj, mame volny kurt a podle historie by se ti mohl hodit. Chces jit hrat?</textarea></div>
         <div class="field"><label>Akce pro vytizeni</label><select><option>Bez slevy</option><option>Bonusovy kredit 50 Kc</option><option>Mimo spicku -15 %</option><option>Pozvat i kamarady hrace</option></select></div>
       </div>
-      <button class="primary-button" data-confirm="admin-invite" data-player="${data.player || "Petr Novak"}" data-court="${data.court || "Kurt 3"}" data-time="${data.time || "Dnes 14:30"}">Poslat pozvanku</button>
+      <button class="primary-button" data-confirm="admin-invite" data-player="${data.player || "Robin"}" data-court="${data.court || "Kurt 3"}" data-time="${data.time || "Dnes 14:30"}">Poslat pozvanku</button>
     </div>
   `;
 }
@@ -5769,7 +5705,7 @@ function habitAlertModal(data) {
         <p class="muted">Toto neni cekaci listina. Portal jen pozna obvykly rytmus hrace a nabidne mu vhodny volny termin.</p>
       </div>
       <div class="profile-list">
-        <div class="profile-row"><span>Hrac</span><span>${data.player || "Petr Novak"}</span></div>
+        <div class="profile-row"><span>Hrac</span><span>${data.player || "Robin"}</span></div>
         <div class="profile-row"><span>Volny termin</span><span>${data.time || "Kurt 3 dnes 14:30"}</span></div>
         <div class="profile-row"><span>Proc</span><span>casto hraje podobny den/cas a ma vhodny kredit</span></div>
       </div>
@@ -5777,7 +5713,7 @@ function habitAlertModal(data) {
         <div class="field"><label>Zprava</label><textarea>Vidime volny termin v case, kdy obvykle chodis hrat. Chces si ho rezervovat?</textarea></div>
         <div class="field"><label>Limit otravnosti</label><select><option>max. 1x tydne</option><option>max. 2x mesicne</option><option>jen kdyz ma kredit</option></select></div>
       </div>
-      <button class="primary-button" data-confirm="habit-alert" data-player="${data.player || "Petr Novak"}" data-time="${data.time || "Kurt 3 dnes 14:30"}">Poslat upozorneni</button>
+      <button class="primary-button" data-confirm="habit-alert" data-player="${data.player || "Robin"}" data-time="${data.time || "Kurt 3 dnes 14:30"}">Poslat upozorneni</button>
     </div>
   `;
 }

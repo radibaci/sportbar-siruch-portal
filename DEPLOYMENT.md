@@ -35,11 +35,17 @@ GitHub Pages muze po prvnim zapnuti potrebovat nekolik minut.
 
 | Role | E-mail | Heslo |
 | --- | --- | --- |
-| Hrac Radim | radim@siruch.cz | siruch-radim |
-| Hrac Petr | petr@siruch.cz | siruch-petr |
-| Hrac Jana | jana@siruch.cz | siruch-jana |
-| Hrac Tomas | tomas@siruch.cz | siruch-tomas |
-| Hrac Karel | karel@siruch.cz | siruch-karel |
+| Robin | robin@siruch.cz | siruch-robin |
+| Bob | bob@siruch.cz | siruch-bob |
+| Honza | honza@siruch.cz | siruch-honza |
+| Marek | marek@siruch.cz | siruch-marek |
+| Darek | darek@siruch.cz | siruch-darek |
+| Filip | filip@siruch.cz | siruch-filip |
+| Radim | radim@siruch.cz | siruch-radim |
+| Zbyna | zbyna@siruch.cz | siruch-zbyna |
+| Handa | handa@siruch.cz | siruch-handa |
+| Prema | prema@siruch.cz | siruch-prema |
+| Viki | viki@siruch.cz | siruch-viki |
 | Spravce | spravce@siruch.cz | siruch-admin |
 | Vypletac | vypletac@siruch.cz | siruch-vyplet |
 | Obchodnik | obchod@siruch.cz | siruch-obchod |
