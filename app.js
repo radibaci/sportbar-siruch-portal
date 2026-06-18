@@ -1,7 +1,7 @@
 const club = {
   name: "Sportbar Siruch",
   logoText: "DM",
-  logoUrl: "assets/club-logo-dm-192.png",
+  logoUrl: "assets/club-logo-dm-192.png?v=54",
   open: "8:00",
   close: "21:00",
   slotMinutes: 30,
@@ -644,7 +644,7 @@ const modalContent = document.querySelector("#modalContent");
 const modalClose = document.querySelector("#modalClose");
 const toast = document.querySelector("#toast");
 const STORAGE_KEY = "tennis-club-portal-state-v1";
-const DEMO_VERSION = 53;
+const DEMO_VERSION = 54;
 const API_BASE = new URLSearchParams(window.location.search).get("api") || "";
 let sharedApiOnline = false;
 let suppressRemotePersist = false;
@@ -1078,8 +1078,8 @@ async function sendAndroidNotificationTest() {
     const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
     await registration.showNotification(`${club.name}: ${count} zpravy`, {
       body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
-      icon: "assets/club-logo-dm-192.png",
-      badge: "assets/club-logo-dm-192.png",
+      icon: "assets/club-logo-dm-192.png?v=54",
+      badge: "assets/club-logo-dm-192.png?v=54",
       tag: `siruch-test-${Date.now()}`,
       renotify: false,
       data: { url: "./index.html" }

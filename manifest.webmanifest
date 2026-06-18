@@ -2,8 +2,8 @@
   "name": "Sportbar Siruch",
   "short_name": "Siruch",
   "description": "Mobilni klubovy portal pro rezervace kurtu, akce a hledani spoluhracu.",
-  "id": "./?v=53",
-  "start_url": "./index.html?v=53",
+  "id": "./?v=54",
+  "start_url": "./index.html?v=54",
   "scope": "./",
   "display": "standalone",
   "display_override": ["standalone", "browser"],
@@ -12,13 +12,13 @@
   "orientation": "portrait",
   "icons": [
     {
-      "src": "assets/club-logo-dm-192.png",
+      "src": "assets/club-logo-dm-192.png?v=54",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "assets/club-logo-dm-512.png",
+      "src": "assets/club-logo-dm-512.png?v=54",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
