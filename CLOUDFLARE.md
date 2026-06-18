@@ -45,10 +45,16 @@ Po deploy vznikne URL typu:
 https://sportbar-siruch-api.<ucet>.workers.dev
 ```
 
+Aktualni API URL:
+
+```text
+https://sportbar-siruch-api.bacik.workers.dev
+```
+
 Frontend na GitHub Pages lze testovat takto:
 
 ```text
-https://radibaci.github.io/sportbar-siruch-portal/?api=https://sportbar-siruch-api.<ucet>.workers.dev
+https://radibaci.github.io/sportbar-siruch-portal/?api=https://sportbar-siruch-api.bacik.workers.dev
 ```
 
 Kdyz API bezi, aplikace nacita a uklada spolecny stav pres `/api/state`.

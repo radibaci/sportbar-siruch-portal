@@ -1,6 +1,8 @@
 name = "sportbar-siruch-api"
 main = "worker/index.js"
 compatibility_date = "2026-06-18"
+workers_dev = true
+preview_urls = true
 
 [[d1_databases]]
 binding = "DB"
