@@ -708,7 +708,7 @@ const modalContent = document.querySelector("#modalContent");
 const modalClose = document.querySelector("#modalClose");
 const toast = document.querySelector("#toast");
 const STORAGE_KEY = "tennis-club-portal-state-v1";
-const DEMO_VERSION = 49;
+const DEMO_VERSION = 50;
 
 function replaceArray(target, source) {
   if (!Array.isArray(source)) return;
@@ -1077,6 +1077,35 @@ function testAppBadge() {
     }
   } catch (error) {
     showToast("Telefon odznak zatim nepovolil. Zkus aplikaci nainstalovat na plochu a povolit notifikace.");
+  }
+}
+
+async function sendAndroidNotificationTest() {
+  try {
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      showToast("Tento telefon/prohlizec nepodporuje webove notifikace.");
+      return;
+    }
+    let permission = Notification.permission;
+    if (permission !== "granted") permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      showToast("Notifikace nejsou povolene, Android badge se proto neukaze.");
+      return;
+    }
+    const registration = await navigator.serviceWorker.ready;
+    const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
+    await registration.showNotification(`${club.name}: ${count} zpravy`, {
+      body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
+      icon: "assets/app-icon-192.png",
+      badge: "assets/app-icon-192.png",
+      tag: `siruch-test-${Date.now()}`,
+      renotify: false,
+      data: { url: "./index.html" }
+    });
+    if ("setAppBadge" in navigator) navigator.setAppBadge(count);
+    showToast("Testovaci notifikace odeslana. Zkontroluj ikonu aplikace na plose.");
+  } catch (error) {
+    showToast("Notifikaci se nepodarilo odeslat. Zkus aplikaci spustit z ikony na plose.");
   }
 }
 
@@ -3929,10 +3958,12 @@ function renderProfile() {
           <div class="profile-row"><span>Android Chrome</span><span>menu ⋮ → Přidat na plochu / Instalovat aplikaci</span></div>
           <div class="profile-row"><span>iPhone Safari</span><span>Sdílet → Přidat na plochu</span></div>
           <div class="profile-row"><span>Po instalaci</span><span>klikni na Zapnout notifikace a odznak</span></div>
+          <div class="profile-row"><span>Android limit</span><span>web umi spustit hlavne notifikacni tecku; cislo zalezi na launcheru telefonu</span></div>
         </div>
         <div class="inline-actions">
           <button class="primary-button" data-action="enable-notifications">Zapnout notifikace a odznak</button>
           <button class="secondary-button" data-action="test-app-badge">Test cisla na ikone</button>
+          <button class="secondary-button" data-action="test-android-notification">Test Android notifikace</button>
         </div>
       </section>
 
@@ -6266,6 +6297,8 @@ document.addEventListener("click", (event) => {
     enablePortalNotifications();
   } else if (action?.dataset.action === "test-app-badge") {
     testAppBadge();
+  } else if (action?.dataset.action === "test-android-notification") {
+    sendAndroidNotificationTest();
   } else if (action) {
     openModal(action.dataset.action, action.dataset);
   }
