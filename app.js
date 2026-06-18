@@ -645,72 +645,118 @@ const modalClose = document.querySelector("#modalClose");
 const toast = document.querySelector("#toast");
 const STORAGE_KEY = "tennis-club-portal-state-v1";
 const DEMO_VERSION = 52;
+const API_BASE = new URLSearchParams(window.location.search).get("api") || "";
+let sharedApiOnline = false;
+let suppressRemotePersist = false;
 
 function replaceArray(target, source) {
   if (!Array.isArray(source)) return;
   target.splice(0, target.length, ...source);
 }
 
-function persistData() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      version: DEMO_VERSION,
-      club,
-      courts,
-      events,
-      courtPriceRules,
-      adminReservations,
-      playerOrders,
-      stringingOrders,
-      clubPolls,
-      tournaments,
-      players,
-      guestProfiles,
-      notifications,
-      gameProposals,
-      personalReservations,
-      joinedEvents: [...state.joinedEvents]
-      ,
-      joinedEventsByPlayer: state.joinedEventsByPlayer
-    }));
-  } catch (_) {}
+function apiUrl(path) {
+  return `${API_BASE}${path}`;
 }
 
-function hydrateStoredData() {
+function portalStatePayload() {
+  return {
+    version: DEMO_VERSION,
+    club,
+    courts,
+    events,
+    courtPriceRules,
+    adminReservations,
+    playerOrders,
+    stringingOrders,
+    clubPolls,
+    tournaments,
+    players,
+    guestProfiles,
+    notifications,
+    gameProposals,
+    personalReservations,
+    joinedEvents: [...state.joinedEvents],
+    joinedEventsByPlayer: state.joinedEventsByPlayer
+  };
+}
+
+function applyStoredState(saved) {
+  if (!saved || saved.version !== DEMO_VERSION) return false;
+  suppressRemotePersist = true;
+  if (saved.club) Object.assign(club, saved.club);
+  replaceArray(courts, saved.courts);
+  replaceArray(events, saved.events);
+  replaceArray(courtPriceRules, saved.courtPriceRules);
+  replaceArray(adminReservations, saved.adminReservations);
+  replaceArray(playerOrders, saved.playerOrders);
+  replaceArray(stringingOrders, saved.stringingOrders);
+  replaceArray(clubPolls, saved.clubPolls);
+  replaceArray(tournaments, saved.tournaments);
+  replaceArray(notifications, saved.notifications);
+  replaceArray(gameProposals, saved.gameProposals);
+  replaceArray(personalReservations, saved.personalReservations);
+  if (Array.isArray(saved.joinedEvents)) state.joinedEvents = new Set(saved.joinedEvents);
+  if (saved.joinedEventsByPlayer) state.joinedEventsByPlayer = saved.joinedEventsByPlayer;
+  if (Array.isArray(saved.players)) {
+    saved.players.forEach((savedPlayer) => {
+      const player = adminPlayerDirectory.find((item) => item.id === savedPlayer.id);
+      if (player) Object.assign(player, savedPlayer);
+    });
+  }
+  if (Array.isArray(saved.guestProfiles)) {
+    saved.guestProfiles.forEach((savedGuest) => {
+      const guest = adminPlayerDirectory.find((item) => item.id === savedGuest.id);
+      if (guest) Object.assign(guest, savedGuest);
+    });
+  }
+  setCurrentPersona(state.persona);
+  suppressRemotePersist = false;
+  return true;
+}
+
+function persistData() {
+  const payload = portalStatePayload();
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch (_) {}
+
+  if (sharedApiOnline && !suppressRemotePersist) {
+    fetch(apiUrl("/api/state"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ state: payload })
+    }).catch(() => {
+      sharedApiOnline = false;
+      showToast("API je nedostupne, zmeny jsou zatim jen v tomto zarizeni.");
+    });
+  }
+}
+
+async function hydrateStoredData() {
+  try {
+    const response = await fetch(apiUrl("/api/state"), { cache: "no-store" });
+    if (response.ok) {
+      const payload = await response.json();
+      sharedApiOnline = true;
+      if (payload.state && applyStoredState(payload.state)) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.state));
+        return "api";
+      }
+    }
+  } catch (_) {
+    sharedApiOnline = false;
+  }
+
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-    if (!saved) return;
+    if (!saved) return sharedApiOnline ? "seed" : "default";
     if (saved.version !== DEMO_VERSION) {
       localStorage.removeItem(STORAGE_KEY);
-      return;
+      return sharedApiOnline ? "seed" : "default";
     }
-    if (saved.club) Object.assign(club, saved.club);
-    replaceArray(courts, saved.courts);
-    replaceArray(events, saved.events);
-    replaceArray(courtPriceRules, saved.courtPriceRules);
-    replaceArray(adminReservations, saved.adminReservations);
-    replaceArray(playerOrders, saved.playerOrders);
-    replaceArray(stringingOrders, saved.stringingOrders);
-    replaceArray(clubPolls, saved.clubPolls);
-    replaceArray(tournaments, saved.tournaments);
-    replaceArray(notifications, saved.notifications);
-    replaceArray(gameProposals, saved.gameProposals);
-    replaceArray(personalReservations, saved.personalReservations);
-    if (Array.isArray(saved.joinedEvents)) state.joinedEvents = new Set(saved.joinedEvents);
-    if (saved.joinedEventsByPlayer) state.joinedEventsByPlayer = saved.joinedEventsByPlayer;
-    if (Array.isArray(saved.players)) {
-      saved.players.forEach((savedPlayer) => {
-        const player = adminPlayerDirectory.find((item) => item.id === savedPlayer.id);
-        if (player) Object.assign(player, savedPlayer);
-      });
-    }
-    if (Array.isArray(saved.guestProfiles)) {
-      saved.guestProfiles.forEach((savedGuest) => {
-        const guest = adminPlayerDirectory.find((item) => item.id === savedGuest.id);
-        if (guest) Object.assign(guest, savedGuest);
-      });
-    }
+    if (applyStoredState(saved)) return sharedApiOnline ? "seed" : "local";
   } catch (_) {}
+  return sharedApiOnline ? "seed" : "default";
 }
 
 function timeToMinutes(time) {
@@ -6391,12 +6437,17 @@ modalBackdrop.addEventListener("click", (event) => {
 
 document.querySelector("#loginButton").addEventListener("click", () => openModal("login"));
 
-hydrateStoredData();
+async function bootPortal() {
+  const source = await hydrateStoredData();
+  if (source === "seed") persistData();
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
-  });
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    });
+  }
+
+  render();
 }
 
-render();
+bootPortal();

@@ -10,6 +10,22 @@ Otevri `index.html` v prohlizeci, nebo spust lokalni staticky server:
 npx http-server tennis-club-portal -p 4173
 ```
 
+Pro testovani se spolecnou malou DB/API pouzij vestaveny lokalni server:
+
+```powershell
+$env:PORT="4213"
+node dev-server.mjs
+```
+
+Pak otevri `http://localhost:4213/`. Server uklada sdileny stav do `data/portal-db.json`.
+Kdyz API nebezi, aplikace se vrati k puvodnimu lokalnimu rezimu v prohlizeci.
+
+Rychla kontrola API:
+
+```powershell
+node -e "fetch('http://localhost:4213/api/health').then(r=>r.json()).then(console.log)"
+```
+
 ## Co prototyp ukazuje
 
 - mobilni domovskou obrazovku ve smeru Klubovy hub + Hracska komunita
