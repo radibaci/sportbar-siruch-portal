@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#123c2f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Siruch">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Sportbar Siruch | Klubovy portal</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icon.svg">
+    <link rel="stylesheet" href="styles.css?v=51">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <span class="club-logo" id="clubLogo">SS</span>
+        <div>
+          <p class="eyebrow portal-eyebrow">Klubovy portal <span id="clubHoursLabel">8:00-21:00</span></p>
+          <h1 id="clubNameTitle">Sportbar Siruch</h1>
+          <p class="muted">Ahoj, Radime</p>
+        </div>
+        <div class="top-actions">
+          <span class="credit-badge" id="creditBadge">1 840 Kc</span>
+          <button class="avatar-button" id="loginButton" aria-label="Prihlaseni">
+            <span>RB</span>
+          </button>
+        </div>
+      </header>
+      <div class="role-switch-bar" aria-label="Testovaci rezim portalu">
+        <button class="role-option active" data-role="player" data-persona="radim">Hrac 1</button>
+        <button class="role-option" data-role="player" data-persona="petr">Hrac 2</button>
+        <button class="role-option" data-role="player" data-persona="jana">Hrac 3</button>
+        <button class="role-option" data-role="player" data-persona="tomas">Hrac 4</button>
+        <button class="role-option" data-role="player" data-persona="karel">Hrac 5</button>
+        <button class="role-option" data-role="guest">Host</button>
+        <button class="role-option" data-role="admin">Spravce</button>
+        <button class="role-option" data-role="stringer">Vypletac</button>
+        <button class="role-option" data-role="seller">Obchod</button>
+      </div>
+
+      <main id="appContent" class="content" aria-live="polite"></main>
+
+      <nav class="bottom-nav" aria-label="Hlavni navigace">
+        <button class="nav-item active" data-view="home">
+          <span class="nav-icon">⌂</span>
+          <span>Domu</span>
+        </button>
+        <button class="nav-item" data-view="booking">
+          <span class="nav-icon">▦</span>
+          <span>Rezervace</span>
+        </button>
+        <button class="nav-item" data-view="players">
+          <span class="nav-icon">◌</span>
+          <span>Hraci</span>
+        </button>
+        <button class="nav-item" data-view="events">
+          <span class="nav-icon">◇</span>
+          <span>Akce</span>
+        </button>
+        <button class="nav-item" data-view="profile">
+          <span class="nav-icon">○</span>
+          <span>Profil</span>
+        </button>
+      </nav>
+    </div>
+
+    <div class="modal-backdrop" id="modalBackdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <button class="modal-close" id="modalClose" aria-label="Zavrit">×</button>
+        <div id="modalContent"></div>
+      </section>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="app.js?v=49"></script>
+  </body>
+</html>
