@@ -1,7 +1,7 @@
 const club = {
   name: "Sportbar Siruch",
-  logoText: "SS",
-  logoUrl: "",
+  logoText: "DM",
+  logoUrl: "assets/club-logo-dm-192.png",
   open: "8:00",
   close: "21:00",
   slotMinutes: 30,
@@ -708,7 +708,7 @@ const modalContent = document.querySelector("#modalContent");
 const modalClose = document.querySelector("#modalClose");
 const toast = document.querySelector("#toast");
 const STORAGE_KEY = "tennis-club-portal-state-v1";
-const DEMO_VERSION = 50;
+const DEMO_VERSION = 51;
 
 function replaceArray(target, source) {
   if (!Array.isArray(source)) return;
@@ -1096,8 +1096,8 @@ async function sendAndroidNotificationTest() {
     const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
     await registration.showNotification(`${club.name}: ${count} zpravy`, {
       body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
-      icon: "assets/app-icon-192.png",
-      badge: "assets/app-icon-192.png",
+      icon: "assets/club-logo-dm-192.png",
+      badge: "assets/club-logo-dm-192.png",
       tag: `siruch-test-${Date.now()}`,
       renotify: false,
       data: { url: "./index.html" }
