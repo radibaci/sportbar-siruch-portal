@@ -646,8 +646,55 @@ const toast = document.querySelector("#toast");
 const STORAGE_KEY = "tennis-club-portal-state-v1";
 const DEMO_VERSION = 54;
 const API_BASE = new URLSearchParams(window.location.search).get("api") || "";
+const LOGIN_SESSION_KEY = "tennis-club-login-session";
 let sharedApiOnline = false;
 let suppressRemotePersist = false;
+let loginPromptShown = false;
+
+function isLocalTestingMode() {
+  return ["localhost", "127.0.0.1", "::1", ""].includes(window.location.hostname);
+}
+
+function savedLoginSession() {
+  try {
+    return JSON.parse(localStorage.getItem(LOGIN_SESSION_KEY) || "null");
+  } catch (_) {
+    return null;
+  }
+}
+
+function applyLoginSession() {
+  const session = savedLoginSession();
+  const account = session?.email ? accountByEmail(session.email) : null;
+  if (account && account.role === session.role) {
+    state.role = account.role;
+    state.view = "home";
+    if (account.persona) setCurrentPersona(account.persona);
+    return true;
+  }
+
+  if (!isLocalTestingMode()) {
+    state.role = "guest";
+    state.view = "home";
+  }
+  return false;
+}
+
+function saveLoginSession(account) {
+  try {
+    localStorage.setItem(LOGIN_SESSION_KEY, JSON.stringify({
+      email: account.email,
+      role: account.role,
+      persona: account.persona || "",
+      loggedAt: Date.now()
+    }));
+  } catch (_) {}
+}
+
+function updateRoleSwitcherVisibility() {
+  const roleSwitch = document.querySelector(".role-switch-bar");
+  if (roleSwitch) roleSwitch.hidden = !isLocalTestingMode();
+}
 
 function replaceArray(target, source) {
   if (!Array.isArray(source)) return;
@@ -1118,6 +1165,7 @@ function completeDemoLogin() {
   state.role = account.role;
   state.view = "home";
   if (account.persona) setCurrentPersona(account.persona);
+  saveLoginSession(account);
   persistData();
   return true;
 }
@@ -2728,6 +2776,7 @@ function render() {
 
   content.innerHTML = views[view]();
   renderNavigation();
+  updateRoleSwitcherVisibility();
   updateAppBadge();
 }
 
@@ -6228,7 +6277,7 @@ document.addEventListener("click", (event) => {
   const toggleSection = event.target.closest("[data-toggle-section]");
   const confirm = event.target.closest("[data-confirm]");
 
-  if (role) {
+  if (role && isLocalTestingMode()) {
     state.role = role.dataset.role;
     if (role.dataset.persona) setCurrentPersona(role.dataset.persona);
     state.view = "home";
@@ -6440,6 +6489,7 @@ document.querySelector("#loginButton").addEventListener("click", () => openModal
 async function bootPortal() {
   const source = await hydrateStoredData();
   if (source === "seed") persistData();
+  const hasSession = applyLoginSession();
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
@@ -6448,6 +6498,10 @@ async function bootPortal() {
   }
 
   render();
+  if (!isLocalTestingMode() && !hasSession && !loginPromptShown) {
+    loginPromptShown = true;
+    window.setTimeout(() => openModal("login"), 300);
+  }
 }
 
 bootPortal();
