@@ -1,11 +1,10 @@
-const CACHE_NAME = "tennis-club-portal-v56";
+const CACHE_NAME = "tennis-club-portal-v57";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=51",
-  "./app.js?v=52",
-  "./manifest.webmanifest",
-  "./icon.svg",
+  "./styles.css?v=52",
+  "./app.js?v=53",
+  "./manifest.webmanifest?v=53",
   "./assets/app-icon-192.png",
   "./assets/app-icon-512.png",
   "./assets/club-logo-dm.png",
@@ -21,6 +20,7 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (event) => {
+  self.skipWaiting();
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
 });
 
@@ -28,7 +28,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))
-    )
+    ).then(() => clients.claim())
   );
 });
 
