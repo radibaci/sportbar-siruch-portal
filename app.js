@@ -1,7 +1,7 @@
 const club = {
   name: "Sportbar Siruch",
   logoText: "DM",
-  logoUrl: "assets/club-logo-dm-192.png?v=54",
+  logoUrl: "assets/club-logo-dm-192.png?v=71",
   open: "8:00",
   close: "21:00",
   slotMinutes: 30,
@@ -24,13 +24,18 @@ const currentUser = {
   nextLoyaltyHours: 100
 };
 
+const appToday = new Date();
+appToday.setHours(12, 0, 0, 0);
+const weekdayCodes = ["Ne", "Po", "Ut", "St", "Ct", "Pa", "So"];
+
 const state = {
   role: "player",
   persona: "radim",
   view: "home",
   selectedDay: 0,
-  calendarYear: 2026,
-  calendarMonth: 5,
+  selectedBookingDate: "",
+  calendarYear: appToday.getFullYear(),
+  calendarMonth: appToday.getMonth(),
   recurringCancelled: false,
   joinedEvents: new Set(),
   joinedEventsByPlayer: {},
@@ -58,7 +63,13 @@ const demoLoginAccounts = [
   { email: "obchod@siruch.cz", password: "siruch-obchod", role: "seller", persona: "radim", label: "Obchod" }
 ];
 
-const days = ["Dnes", "Zitra", "St", "Ct", "Pa", "So", "Ne"];
+const days = Array.from({ length: 7 }, (_, index) => {
+  if (index === 0) return "Dnes";
+  if (index === 1) return "Zitra";
+  const date = new Date(appToday);
+  date.setDate(date.getDate() + index);
+  return weekdayCodes[date.getDay()];
+});
 const courtPhoto = "assets/court-top-view.png";
 
 const courts = [
@@ -70,7 +81,7 @@ const courts = [
     color: "#c66532",
     photo: courtPhoto,
     reservations: [
-      { start: "17:00", end: "19:00", title: "Patecni double", type: "mine", players: ["Radim", "Robin", "Bob", "Honza"] }
+      { isoDate: "2026-06-19", start: "17:00", end: "19:00", title: "Patecni double", type: "mine", players: ["Radim", "Robin", "Bob", "Honza"] }
     ]
   },
   {
@@ -506,6 +517,7 @@ const motivationLines = [
 const personalReservations = [
   {
     id: "fri-double-1700",
+    isoDate: "2026-06-19",
     day: "Pa",
     date: "19",
     start: "17:00",
@@ -651,9 +663,12 @@ let sharedApiOnline = false;
 let suppressRemotePersist = false;
 let loginPromptShown = false;
 let remoteUpdatedAt = "";
+let lastRemoteState = null;
 let lastLocalPersistAt = 0;
 let syncTimer = null;
 let lastActionMessage = "";
+let remoteSaveQueue = Promise.resolve();
+let remoteSavesPending = 0;
 
 function isLocalTestingMode() {
   return ["localhost", "127.0.0.1", "::1", ""].includes(window.location.hostname);
@@ -731,6 +746,117 @@ function portalStatePayload() {
   };
 }
 
+function cloneData(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function sameData(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function entityKey(item, index, collectionName) {
+  if (item?.id) return item.id;
+  if (item?.reservationId) return item.reservationId;
+  if (collectionName === "courtPriceRules") return `${item.court}-${item.days}-${item.start}-${item.end}`;
+  return `${collectionName}-${index}`;
+}
+
+function mergeEntityArray(base = [], local = [], remote = [], collectionName = "items") {
+  const toMap = (items) => new Map(items.map((item, index) => [entityKey(item, index, collectionName), item]));
+  const baseMap = toMap(base);
+  const localMap = toMap(local);
+  const remoteMap = toMap(remote);
+  for (const [key, baseItem] of baseMap) {
+    if (!localMap.has(key)) remoteMap.delete(key);
+    else if (!sameData(localMap.get(key), baseItem)) remoteMap.set(key, cloneData(localMap.get(key)));
+  }
+  for (const [key, localItem] of localMap) {
+    if (!baseMap.has(key)) remoteMap.set(key, cloneData(localItem));
+  }
+  return [...remoteMap.values()];
+}
+
+function mergeCourts(base = [], local = [], remote = []) {
+  const merged = mergeEntityArray(base, local, remote, "courts");
+  return merged.map((court) => {
+    const baseCourt = base.find((item) => item.id === court.id) || {};
+    const localCourt = local.find((item) => item.id === court.id) || {};
+    const remoteCourt = remote.find((item) => item.id === court.id) || court;
+    if (!localCourt.id) return court;
+    return {
+      ...court,
+      reservations: mergeEntityArray(
+        baseCourt.reservations || [],
+        localCourt.reservations || [],
+        remoteCourt.reservations || [],
+        `court-${court.id}-reservations`
+      )
+    };
+  });
+}
+
+function mergeConcurrentState(remoteState, localState, baseState) {
+  if (!baseState) return cloneData(localState);
+  const merged = cloneData(remoteState);
+  const entityCollections = [
+    "events", "adminReservations", "playerOrders", "stringingOrders", "clubPolls",
+    "tournaments", "players", "guestProfiles", "notifications", "gameProposals", "personalReservations"
+  ];
+  merged.courts = mergeCourts(baseState.courts || [], localState.courts || [], remoteState.courts || []);
+  entityCollections.forEach((key) => {
+    merged[key] = mergeEntityArray(baseState[key] || [], localState[key] || [], remoteState[key] || [], key);
+  });
+  ["club", "courtPriceRules", "joinedEvents", "joinedEventsByPlayer"].forEach((key) => {
+    if (!sameData(baseState[key], localState[key])) merged[key] = cloneData(localState[key]);
+  });
+  merged.version = localState.version;
+  return merged;
+}
+
+function migrateDateFields() {
+  personalReservations.forEach((reservation) => {
+    if (!reservation.isoDate) reservation.isoDate = reservationIsoDate(reservation);
+    const date = dateFromIso(reservation.isoDate);
+    if (date) {
+      reservation.day = weekdayCodes[date.getDay()];
+      reservation.date = String(date.getDate());
+      reservation.month = date.getMonth();
+      reservation.year = date.getFullYear();
+    }
+  });
+  courts.forEach((court) => {
+    court.reservations.forEach((slot) => {
+      if (slot.isoDate) return;
+      const linked = slot.reservationId ? personalReservations.find((reservation) => reservation.id === slot.reservationId) : null;
+      if (linked?.isoDate) slot.isoDate = linked.isoDate;
+      else if (typeof slot.day === "number") slot.isoDate = dateToIso(dateForWeekIndex(slot.day));
+      else if (court.id === "c1" && slot.title === "Patecni double") slot.isoDate = "2026-06-19";
+    });
+  });
+  personalReservations.forEach((reservation) => {
+    const activePlayers = normalizedAttendance(reservation).filter(activeForGame);
+    if (activePlayers.length === 0) reservation.status = "cancelled";
+  });
+  courts.forEach((court) => {
+    court.reservations = court.reservations.filter((slot) => {
+      const linked = slot.reservationId ? personalReservations.find((reservation) => reservation.id === slot.reservationId) : null;
+      return !linked || linked.status !== "cancelled";
+    });
+  });
+  notifications.splice(0, notifications.length, ...notifications.filter((item) => {
+    if (item.reservationIndex === undefined) return true;
+    return personalReservations[item.reservationIndex]?.status !== "cancelled";
+  }));
+  adminReservations.splice(0, adminReservations.length, ...adminReservations.filter((item) => {
+    if (!item.reservationId) return true;
+    return reservationById(item.reservationId)?.status !== "cancelled";
+  }));
+  adminReservations.forEach((item) => {
+    const reservation = item.reservationId ? reservationById(item.reservationId) : null;
+    if (reservation) item.time = `${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}`;
+  });
+}
+
 function applyStoredState(saved) {
   if (!saved || saved.version !== DEMO_VERSION) return false;
   suppressRemotePersist = true;
@@ -760,31 +886,54 @@ function applyStoredState(saved) {
       if (guest) Object.assign(guest, savedGuest);
     });
   }
+  migrateDateFields();
   setCurrentPersona(state.persona);
   suppressRemotePersist = false;
   return true;
 }
 
+async function pushRemoteState(payload, baseUpdatedAt = remoteUpdatedAt, allowMerge = true) {
+  const response = await fetch(apiUrl("/api/state"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state: payload, baseUpdatedAt })
+  });
+  const result = await response.json().catch(() => null);
+  if (response.status === 409 && result?.state && allowMerge) {
+    let merged = mergeConcurrentState(result.state, payload, lastRemoteState);
+    const currentPayload = portalStatePayload();
+    if (!sameData(currentPayload, payload)) {
+      merged = mergeConcurrentState(merged, currentPayload, payload);
+    }
+    applyStoredState(merged);
+    render();
+    return pushRemoteState(merged, result.updatedAt, false);
+  }
+  if (!response.ok) throw new Error(result?.error || "API save failed");
+  if (result?.updatedAt) remoteUpdatedAt = result.updatedAt;
+  lastRemoteState = cloneData(payload);
+  return result;
+}
+
 function persistData() {
-  const payload = portalStatePayload();
+  const payload = cloneData(portalStatePayload());
   lastLocalPersistAt = Date.now();
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch (_) {}
 
   if (sharedApiOnline && !suppressRemotePersist) {
-    fetch(apiUrl("/api/state"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state: payload })
-    }).then((response) => response.ok ? response.json() : null)
-      .then((result) => {
-        if (result?.updatedAt) remoteUpdatedAt = result.updatedAt;
-      })
+    remoteSavesPending += 1;
+    remoteSaveQueue = remoteSaveQueue
+      .catch(() => null)
+      .then(() => pushRemoteState(payload))
       .catch(() => {
-      sharedApiOnline = false;
-      showToast("API je nedostupne, zmeny jsou zatim jen v tomto zarizeni.");
-    });
+        sharedApiOnline = false;
+        showToast("API je nedostupne, zmeny jsou zatim jen v tomto zarizeni.");
+      })
+      .finally(() => {
+        remoteSavesPending = Math.max(0, remoteSavesPending - 1);
+      });
   }
 }
 
@@ -795,6 +944,7 @@ async function hydrateStoredData() {
       const payload = await response.json();
       sharedApiOnline = true;
       if (payload.updatedAt) remoteUpdatedAt = payload.updatedAt;
+      if (payload.state) lastRemoteState = cloneData(payload.state);
       if (payload.state && applyStoredState(payload.state)) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.state));
         return "api";
@@ -818,6 +968,7 @@ async function hydrateStoredData() {
 
 async function syncRemoteState({ silent = true } = {}) {
   if (!sharedApiOnline) return false;
+  if (remoteSavesPending > 0) return false;
   if (Date.now() - lastLocalPersistAt < 1200) return false;
   try {
     const response = await fetch(apiUrl("/api/state"), { cache: "no-store" });
@@ -827,6 +978,7 @@ async function syncRemoteState({ silent = true } = {}) {
     if (!payload.state || !payload.updatedAt || payload.updatedAt === remoteUpdatedAt) return false;
     if (!applyStoredState(payload.state)) return false;
     remoteUpdatedAt = payload.updatedAt;
+    lastRemoteState = cloneData(payload.state);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.state));
     } catch (_) {}
@@ -863,6 +1015,75 @@ function minutesToTime(minutes) {
 
 function monthName(year, month) {
   return new Intl.DateTimeFormat("cs-CZ", { month: "long", year: "numeric" }).format(new Date(year, month, 1));
+}
+
+function dateToIso(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dateFromIso(isoDate = "") {
+  const match = String(isoDate).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dateForWeekIndex(index = state.selectedDay) {
+  const date = new Date(appToday);
+  date.setDate(date.getDate() + Number(index || 0));
+  return date;
+}
+
+function selectedBookingDateObject() {
+  return dateFromIso(state.selectedBookingDate) || dateForWeekIndex();
+}
+
+function selectedBookingIsoDate() {
+  return dateToIso(selectedBookingDateObject());
+}
+
+function formatPortalDate(date, includeWeekday = true) {
+  return new Intl.DateTimeFormat("cs-CZ", {
+    weekday: includeWeekday ? "long" : undefined,
+    day: "numeric",
+    month: "numeric",
+    year: "numeric"
+  }).format(date);
+}
+
+function formatShortPortalDate(date) {
+  return `${date.getDate()}.${date.getMonth() + 1}.${date.getFullYear()}`;
+}
+
+function nextTournamentSaturday() {
+  const date = new Date(appToday.getFullYear(), appToday.getMonth(), appToday.getDate());
+  let offset = (6 - date.getDay() + 7) % 7;
+  if (offset < 3) offset += 7;
+  date.setDate(date.getDate() + offset);
+  return date;
+}
+
+function reservationIsoDate(reservation = {}) {
+  if (dateFromIso(reservation.isoDate)) return reservation.isoDate;
+  const timestampMatch = String(reservation.id || "").match(/(?:reservation|proposal|order|stringing)-(\d{12,})/);
+  if (timestampMatch && ["Dnes", "Zitra"].includes(reservation.day)) {
+    const created = new Date(Number(timestampMatch[1]));
+    if (!Number.isNaN(created.getTime())) {
+      created.setHours(12, 0, 0, 0);
+      if (reservation.day === "Zitra") created.setDate(created.getDate() + 1);
+      return dateToIso(created);
+    }
+  }
+  const numericDay = Number(reservation.date);
+  if (numericDay > 0) {
+    const year = Number(reservation.year) || state.calendarYear || appToday.getFullYear();
+    const month = Number.isInteger(reservation.month) ? reservation.month : state.calendarMonth;
+    return dateToIso(new Date(year, month, numericDay, 12));
+  }
+  return selectedBookingIsoDate();
 }
 
 function fullDayName(shortDay) {
@@ -971,6 +1192,7 @@ function startReplacementVote(reservationIndex, declinedPlayerId) {
   if (!reservation?.attendance) return false;
   const target = reservationTargetPlayers(reservation);
   const active = normalizedAttendance(reservation).filter(activeForGame);
+  if (active.length === 0) return false;
   if (active.length >= target) return false;
   const candidateId = suggestedReplacementId(reservation, declinedPlayerId);
   const hasCandidate = normalizedAttendance(reservation).some((player) => player.playerId === candidateId);
@@ -988,7 +1210,7 @@ function startReplacementVote(reservationIndex, declinedPlayerId) {
     type: "replacement",
     recipients,
     title: "Hlasovani o nahradnikovi",
-    meta: `${candidate?.name || "Nahradnik"} muze doplnit ${reservationGameType(reservation) === "single" ? "single" : "double"} ${fullDayName(reservation.day)} ${reservation.date}.6. ${reservation.start}`,
+    meta: `${candidate?.name || "Nahradnik"} muze doplnit ${reservationGameType(reservation) === "single" ? "single" : "double"} ${reservationDateLabel(reservation)} ${reservation.start}`,
     status: "Ceka na hlasovani",
     reservationIndex,
     candidateId,
@@ -1008,7 +1230,16 @@ function declineReservation(reservationIndex = 0) {
   notifications.splice(0, notifications.length, ...notifications.filter((item) =>
     !(item.type === "attendance" && item.reservationIndex === reservationIndex && item.recipients?.includes(playerId))
   ));
-  startReplacementVote(reservationIndex, playerId);
+  const active = normalizedAttendance(reservation).filter(activeForGame);
+  if (active.length === 0) {
+    reservation.status = "cancelled";
+    courts.forEach((court) => {
+      court.reservations = court.reservations.filter((slot) => slot.reservationId !== reservation.id);
+    });
+    notifications.splice(0, notifications.length, ...notifications.filter((item) => item.reservationIndex !== reservationIndex));
+  } else {
+    startReplacementVote(reservationIndex, playerId);
+  }
   persistData();
   return true;
 }
@@ -1065,6 +1296,7 @@ function normalizeDayKey(day = "") {
 }
 
 function sameReservationDay(reservation, day, date) {
+  if (dateFromIso(date)) return reservationIsoDate(reservation) === date;
   const sameDate = date && String(reservation.date || "") === String(date || "");
   return sameDate || normalizeDayKey(reservation.day) === normalizeDayKey(day);
 }
@@ -1084,7 +1316,7 @@ function playerHasTimeCollision(playerId, day, date, start, end, ignoreReservati
 
 function visibleReservations() {
   const playerId = currentPersonaId();
-  return personalReservations.filter((reservation) => reservationHasPlayer(reservation, playerId));
+  return personalReservations.filter((reservation) => reservation.status !== "cancelled" && reservationHasPlayer(reservation, playerId));
 }
 
 function visibleNotifications() {
@@ -1099,7 +1331,10 @@ function visibleNotifications() {
   );
   const generatedAttendance = personalReservations.flatMap((reservation, reservationIndex) => {
     const me = normalizedAttendance(reservation).find((player) => player.playerId === playerId);
-    const alreadyHasNotice = explicit.some((item) => item.type === "attendance" && item.reservationIndex === reservationIndex);
+    const alreadyHasNotice = explicit.some((item) =>
+      (item.type === "attendance" && item.reservationIndex === reservationIndex) ||
+      (item.type === "booking-invite" && item.reservationId === reservation.id)
+    );
     if (!me || me.status !== "pending" || alreadyHasNotice) return [];
     return [{
       id: `generated-attendance-${playerId}-${reservationIndex}`,
@@ -1107,7 +1342,7 @@ function visibleNotifications() {
       generated: true,
       recipients: [playerId],
       title: "Potvrdit ucast",
-      meta: `${fullDayName(reservation.day)} ${reservation.date}.6. ${reservation.start}, ${reservation.court.name}`,
+      meta: `${reservationDateLabel(reservation)} ${reservation.start}, ${reservation.court.name}`,
       status: "Ceka na tebe",
       reservationIndex
     }];
@@ -1193,8 +1428,8 @@ async function sendAndroidNotificationTest() {
     const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
     await registration.showNotification(`${club.name}: ${count} zpravy`, {
       body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
-      icon: "assets/club-logo-dm-192.png?v=54",
-      badge: "assets/club-logo-dm-192.png?v=54",
+      icon: "assets/club-logo-dm-192.png?v=71",
+      badge: "assets/club-logo-dm-192.png?v=71",
       tag: `siruch-test-${Date.now()}`,
       renotify: false,
       data: { url: "./index.html" }
@@ -1464,17 +1699,38 @@ function createSingleTournamentFromModal() {
     type: "single",
     status: "registration",
     date,
+    isoDate: dateToIso(nextTournamentSaturday()),
     deadline,
     courts: courts.slice(0, 3).map((court) => court.name),
     maxPlayers,
     entryFee: "250 Kc",
     rules: "Skupiny kazdy s kazdym, potom pavouk.",
-    participants: ["Radim", "Robin", "Bob", "Honza"],
+    participants: [],
     groups: [],
     matches: [],
     knockout: [],
     history: ""
   });
+  persistData();
+  return true;
+}
+
+function toggleTournamentRegistration(tournamentId = "") {
+  const tournament = tournamentById(tournamentId);
+  if (!tournament || tournament.status !== "registration" || state.role !== "player") return false;
+  const name = currentUser.name.split(" ")[0];
+  const index = tournament.participants.indexOf(name);
+  if (index >= 0) {
+    tournament.participants.splice(index, 1);
+    lastActionMessage = "Z turnaje ses odhlasil.";
+  } else {
+    if (tournament.participants.length >= tournament.maxPlayers) {
+      lastActionMessage = "Turnaj je uz plny.";
+      return false;
+    }
+    tournament.participants.push(name);
+    lastActionMessage = "Prihlaseni na turnaj je potvrzeno.";
+  }
   persistData();
   return true;
 }
@@ -1613,7 +1869,7 @@ function createStringingOrderFromProduct(baseOrder, reservation) {
     statusLabel: "ceka na predani rakety",
     reservation: baseOrder.reservation,
     handoff: baseOrder.deliveryMode === "reservation" ? "po hre na recepci" : "recepce",
-    due: reservation ? `${fullDayName(reservation.day)} ${reservation.date}.6. pred dalsi hrou` : baseOrder.reservation,
+    due: reservation ? `${reservationDateLabel(reservation)} pred dalsi hrou` : baseOrder.reservation,
     note: baseOrder.note || "Hrac chce rychle doporuceni.",
     message: ""
   };
@@ -1666,7 +1922,7 @@ function orderDeliveryLabel(order) {
 }
 
 function reservationOrders(reservation, playerId = currentPersonaId()) {
-  const key = `${fullDayName(reservation.day)} ${reservation.date}.6. ${reservation.start}`;
+  const key = `${reservationDateLabel(reservation)} ${reservation.start}`;
   return visiblePlayerOrders(playerId).filter((order) =>
     order.deliveryMode === "reservation" &&
     (order.reservation === key || order.reservation?.includes(reservation.start) || order.reservationIndex === personalReservations.indexOf(reservation))
@@ -1686,15 +1942,16 @@ function courtReservationById(reservationId) {
 }
 
 function bookingDateForSelectedDay() {
-  return String(14 + Number(state.selectedDay || 0));
+  return String(selectedBookingDateObject().getDate());
 }
 
 function bookingDayNameForSelectedDay() {
-  return fullDayName(days[state.selectedDay] || "Dnes");
+  return new Intl.DateTimeFormat("cs-CZ", { weekday: "long" }).format(selectedBookingDateObject());
 }
 
 function reservationDateLabel(reservation) {
-  return `${fullDayName(reservation.day)} ${reservation.date}.6.`;
+  const date = dateFromIso(reservationIsoDate(reservation));
+  return date ? formatPortalDate(date) : `${fullDayName(reservation.day)} ${reservation.date}`;
 }
 
 function reservationTimeLabel(reservation) {
@@ -1713,6 +1970,7 @@ function bookingOverlaps(court, start, end) {
 }
 
 function createBookingReservation() {
+  lastActionMessage = "";
   const court = courtFromBookingValue(document.querySelector("#bookingCourtInput")?.value);
   const start = document.querySelector("#bookingStartInput")?.value || club.open;
   const duration = Number(document.querySelector("#bookingDurationInput")?.value || 90);
@@ -1720,11 +1978,26 @@ function createBookingReservation() {
   const gameType = document.querySelector("#bookingGameTypeInput")?.value || "single";
   const partnerId = document.querySelector("#bookingPartnerInput")?.value || "";
   const partnerMode = document.querySelector("#bookingPartnerModeInput")?.value || "invite";
-  const day = days[state.selectedDay] || "Dnes";
+  const selectedDate = selectedBookingDateObject();
+  const isoDate = dateToIso(selectedDate);
+  const day = weekdayCodes[selectedDate.getDay()];
   const date = bookingDateForSelectedDay();
-  if (!court || timeToMinutes(end) <= timeToMinutes(start) || bookingOverlaps(court, start, end)) return false;
-  if (playerHasTimeCollision(currentPersonaId(), day, date, start, end)) return false;
-  if (partnerId && playerHasTimeCollision(partnerId, day, date, start, end)) return false;
+  if (!court || timeToMinutes(end) <= timeToMinutes(start)) {
+    lastActionMessage = "Zvol platny kurt, zacatek a delku rezervace.";
+    return false;
+  }
+  if (bookingOverlaps(court, start, end)) {
+    lastActionMessage = "Kurt je v tomto case uz obsazeny. Vyber jiny cas nebo kurt.";
+    return false;
+  }
+  if (playerHasTimeCollision(currentPersonaId(), day, isoDate, start, end)) {
+    lastActionMessage = "V tomto case uz mas jinou rezervaci.";
+    return false;
+  }
+  if (partnerId && playerHasTimeCollision(partnerId, day, isoDate, start, end)) {
+    lastActionMessage = `${playerRecordById(partnerId)?.name || "Spoluhrac"} uz v tomto case hraje. Vyber jiny termin.`;
+    return false;
+  }
   const owner = currentPlayerRecord();
   const reservationId = `reservation-${Date.now()}-${currentPersonaId()}`;
   const attendance = [attendanceFromPlayerId(currentPersonaId(), "active", "vytvoril rezervaci")];
@@ -1739,6 +2012,7 @@ function createBookingReservation() {
   const bookingType = partnerId && partnerMode === "invite" ? "pending" : attendance.filter(activeForGame).length >= target ? "mine" : "group";
   const reservation = {
     id: reservationId,
+    isoDate,
     day,
     date,
     start,
@@ -1751,7 +2025,7 @@ function createBookingReservation() {
   };
   personalReservations.unshift(reservation);
   court.reservations.push({
-    day: state.selectedDay,
+    isoDate,
     start,
     end,
     title: bookingType === "pending" ? "Ceka na spoluhrace" : gameType === "single" ? "Dvouhra" : "Ctyrhra",
@@ -1761,7 +2035,7 @@ function createBookingReservation() {
   });
   court.reservations.sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start));
   adminReservations.unshift({
-    time: `${start}-${end}`,
+    time: `${formatPortalDate(selectedDate)} ${start}-${end}`,
     court: court.name,
     surface: court.surface,
     owner: owner.name,
@@ -1807,6 +2081,10 @@ function updateBookingReservationState(reservationId, partnerId, status) {
     admin.tone = status === "confirmed" ? "good" : "warn";
   }
   notifications.splice(0, notifications.length, ...notifications.filter((item) => !(item.reservationId === reservationId && item.recipients?.includes(partnerId))));
+  if (status === "declined") {
+    const reservationIndex = personalReservations.findIndex((item) => item.id === reservationId);
+    if (reservationIndex >= 0) startReplacementVote(reservationIndex, partnerId);
+  }
   persistData();
   return true;
 }
@@ -1838,7 +2116,7 @@ function createProductOrder() {
   const player = currentPlayerRecord();
   const reservation = visibleReservations()[reservationIndex] || visibleReservations()[0] || personalReservations[0];
   const event = events.find((eventItem) => eventItem.id === eventId) || firstUpcomingEvent();
-  const reservationLabel = reservation ? `${fullDayName(reservation.day)} ${reservation.date}.6. ${reservation.start}` : (pickupDate || "bez rezervace");
+  const reservationLabel = reservation ? `${reservationDateLabel(reservation)} ${reservation.start}` : (pickupDate || "bez rezervace");
   const order = {
     id: `order-${Date.now()}`,
     player: player.name,
@@ -1866,7 +2144,7 @@ function createProductOrder() {
   return true;
 }
 
-function saveAdminOrder(product, player) {
+function legacySaveAdminOrder(product, player) {
   const order = playerOrders.find((item) => item.product === product && item.player === player) || playerOrders.find((item) => item.product === product);
   if (!order) return false;
   order.status = order.deliveryMode === "reservation" ? "nachystat k rezervaci" : order.deliveryMode === "event" ? "pridano do akce" : "nachystat na klubu";
@@ -1875,7 +2153,7 @@ function saveAdminOrder(product, player) {
   return true;
 }
 
-function friendOptions(preselected = "") {
+function legacyFriendOptions(preselected = "") {
   const friends = players.filter((player) => player.relation === "friend" || ["filip", "marek", "darek", "handa", "viki"].includes(player.id));
   return friends
     .filter((player) => player.id !== currentPersonaId())
@@ -1900,7 +2178,17 @@ function parseProposalTime(value = "") {
   return match ? { day: normalizeDayKey(match[1]), date: "", start: match[2], end: match[3] } : null;
 }
 
-function createGameInvitation() {
+function nextIsoDateForDay(dayKey = "Dnes") {
+  const normalized = normalizeDayKey(dayKey);
+  if (normalized === "Dnes") return dateToIso(appToday);
+  if (normalized === "Zitra") return dateToIso(dateForWeekIndex(1));
+  const targetIndex = weekdayCodes.indexOf(normalized);
+  if (targetIndex < 0) return selectedBookingIsoDate();
+  const delta = (targetIndex - appToday.getDay() + 7) % 7;
+  return dateToIso(dateForWeekIndex(delta));
+}
+
+function legacyCreateGameInvitation() {
   const gameType = document.querySelector("#inviteGameType")?.value || "double";
   const maxInvitees = gameType === "single" ? 1 : 3;
   const invitees = selectedInvitees(maxInvitees);
@@ -1935,7 +2223,7 @@ function createGameInvitation() {
   return true;
 }
 
-function createEventInvitation(eventId) {
+function legacyCreateEventInvitation(eventId) {
   const event = events.find((item) => item.id === eventId) || events[0];
   const invitees = selectedInvitees(99);
   if (!invitees.length) return false;
@@ -2035,6 +2323,7 @@ function createGameInvitation() {
     id: `proposal-${Date.now()}`,
     ownerId: currentPersonaId(),
     gameType,
+    isoDate: parsed ? nextIsoDateForDay(parsed.day) : selectedBookingIsoDate(),
     title: time,
     court,
     sentTo: [],
@@ -2170,8 +2459,8 @@ function slotPlayerIds(slot, reservation) {
 function slotJoinState(data = {}, playerId = currentPersonaId()) {
   const { court, slot, reservation } = reservationFromSlotData(data);
   if (!court || !slot) return { allowed: false, reason: "Slot se nenasel." };
-  const day = reservation?.day || days[state.selectedDay] || "Dnes";
-  const date = reservation?.date || bookingDateForSelectedDay();
+  const day = reservation?.day || weekdayCodes[selectedBookingDateObject().getDay()];
+  const date = reservation ? reservationIsoDate(reservation) : selectedBookingIsoDate();
   const ids = slotPlayerIds(slot, reservation);
   if (ids.has(playerId) || (reservation && reservationHasAnyPlayer(reservation, playerId))) {
     return { allowed: false, court, slot, reservation, reason: "Uz jsi soucasti teto rezervace, nemuzes se prihlasit sam za sebe." };
@@ -2203,7 +2492,7 @@ function joinOpenSlot(courtName = "", time = "") {
       type: "replacement",
       recipients,
       title: "Hlasovani o nahradnikovi",
-      meta: `${candidate?.name || "Nahradnik"} se hlasi do hry ${fullDayName(stateInfo.reservation.day)} ${stateInfo.reservation.date}.6. ${stateInfo.reservation.start}`,
+      meta: `${candidate?.name || "Nahradnik"} se hlasi do hry ${reservationDateLabel(stateInfo.reservation)} ${stateInfo.reservation.start}`,
       status: "Ceka na hlasovani",
       reservationIndex,
       candidateId: playerId,
@@ -2218,19 +2507,17 @@ function joinOpenSlot(courtName = "", time = "") {
 }
 
 function courtReservations(court) {
-  const day = state.selectedDay;
-  const fixed = court.reservations.filter((item) => item.day === day);
-  const base = court.reservations.filter((item) => item.day === undefined);
-  const variants = [
-    base,
-    base.map((item) => ({ ...item, start: shiftTime(item.start, 30), end: shiftTime(item.end, 30) })),
-    base.filter((_, index) => index !== 0).concat({ start: "14:00", end: "15:30", title: "Hoste", type: "busy" }),
-    base.concat({ start: "7:30", end: "8:30", title: "Ranni dvouhra", type: court.id === "c2" ? "group" : "busy" }),
-    base.map((item) => ({ ...item, start: shiftTime(item.start, -30), end: shiftTime(item.end, -30) })),
-    [{ start: "9:00", end: "11:00", title: "Turnaj", type: "busy" }, { start: "16:00", end: "17:30", title: "Hledaji hrace", type: "group" }],
-    [{ start: "18:00", end: "20:00", title: "Vecerni hra", type: court.id === "c1" ? "mine" : "busy" }]
-  ];
-  return variants[day % variants.length].concat(fixed).sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start));
+  const selectedIso = selectedBookingIsoDate();
+  const selectedDayCode = weekdayCodes[selectedBookingDateObject().getDay()];
+  return court.reservations
+    .filter((item) => {
+      if (item.reservationId && reservationById(item.reservationId)?.status === "cancelled") return false;
+      if (item.isoDate) return item.isoDate === selectedIso;
+      if (typeof item.day === "number") return item.day === state.selectedDay;
+      if (typeof item.day === "string") return normalizeDayKey(item.day) === selectedDayCode;
+      return state.selectedDay === 0 && !state.selectedBookingDate;
+    })
+    .sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start));
 }
 
 function shiftTime(time, delta) {
@@ -2444,15 +2731,16 @@ function saveSpecialOccupancy() {
   const title = document.querySelector("#specialTitleInput")?.value?.trim() || type.label;
   const note = document.querySelector("#specialNoteInput")?.value?.trim() || `${type.label}: bezna rezervace neni dostupna.`;
   if (timeToMinutes(end) <= timeToMinutes(start)) return false;
+  const isoDate = selectedBookingIsoDate();
   const targets = courtId === "all" ? courts : courts.filter((court) => court.id === courtId);
   targets.forEach((court) => {
     court.reservations = court.reservations.filter((reservation) =>
-      reservation.day !== state.selectedDay ||
+      reservation.isoDate !== isoDate ||
       timeToMinutes(reservation.end) <= timeToMinutes(start) ||
       timeToMinutes(reservation.start) >= timeToMinutes(end)
     );
     court.reservations.push({
-      day: state.selectedDay,
+      isoDate,
       start,
       end,
       title,
@@ -2473,8 +2761,10 @@ function saveAdminEvent() {
   const fee = document.querySelector("#eventFeeInput")?.value?.trim() || "Zdarma";
   const detail = document.querySelector("#eventDetailInput")?.value?.trim() || "Detail akce doplni spravce.";
   const visual = document.querySelector("#eventVisualInput")?.value || "rackets";
+  const dayToken = meta.split(/\s+/)[0] || "Dnes";
   events.unshift({
     id: `${visual}-${Date.now()}`,
+    isoDate: nextIsoDateForDay(dayToken),
     thumbnail: visual,
     status: "published",
     date: meta.split(" ")[0] || "Akce",
@@ -2694,7 +2984,16 @@ function declineAttendanceFromNotification(notificationId = "attendance-main") {
     item.id !== notification.id &&
     !(item.type === "attendance" && item.reservationIndex === reservationIndex && item.recipients?.includes(playerId))
   ));
-  startReplacementVote(reservationIndex, playerId);
+  const active = reservation ? normalizedAttendance(reservation).filter(activeForGame) : [];
+  if (reservation && active.length === 0) {
+    reservation.status = "cancelled";
+    courts.forEach((court) => {
+      court.reservations = court.reservations.filter((slot) => slot.reservationId !== reservation.id);
+    });
+    notifications.splice(0, notifications.length, ...notifications.filter((item) => item.reservationIndex !== reservationIndex));
+  } else {
+    startReplacementVote(reservationIndex, playerId);
+  }
   persistData();
   return true;
 }
@@ -2730,9 +3029,15 @@ function proposalToReservation(proposal) {
   if (proposal.ownerId && !invited.some((player) => player.playerId === proposal.ownerId)) {
     invited.unshift(attendanceFromPlayerId(proposal.ownerId, "active", "zalozil hru"));
   }
+  const isoDate = proposal.isoDate || nextIsoDateForDay(dayName);
+  const date = dateFromIso(isoDate) || selectedBookingDateObject();
   return {
-    day: dayName || "Po",
-    date: "24",
+    id: `reservation-${Date.now()}-${proposal.ownerId || "player"}`,
+    isoDate,
+    day: weekdayCodes[date.getDay()],
+    date: String(date.getDate()),
+    month: date.getMonth(),
+    year: date.getFullYear(),
     start,
     end,
     kind: "Domluvena",
@@ -2743,20 +3048,62 @@ function proposalToReservation(proposal) {
   };
 }
 
+function addReservationToSchedules(reservation) {
+  const target = reservationTargetPlayers(reservation);
+  const activeCount = normalizedAttendance(reservation).filter(activeForGame).length;
+  const type = activeCount >= target ? "mine" : "group";
+  if (!reservation.court.reservations.some((slot) => slot.reservationId === reservation.id)) {
+    reservation.court.reservations.push({
+      isoDate: reservationIsoDate(reservation),
+      start: reservation.start,
+      end: reservation.end,
+      title: reservation.gameType === "single" ? "Dvouhra" : "Ctyrhra",
+      type,
+      reservationId: reservation.id,
+      players: normalizedAttendance(reservation).filter(activeForGame).map((player) => player.name)
+    });
+    reservation.court.reservations.sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start));
+  }
+  if (!adminReservations.some((item) => item.reservationId === reservation.id)) {
+    adminReservations.unshift({
+      reservationId: reservation.id,
+      time: `${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}`,
+      court: reservation.court.name,
+      surface: reservation.court.surface,
+      owner: playerRecordById(normalizedAttendance(reservation)[0]?.playerId)?.name || normalizedAttendance(reservation)[0]?.name || "Hrac",
+      status: activeCount >= target ? "Plna sestava" : "Hleda hrace",
+      players: `${activeCount}/${target}`,
+      tone: activeCount >= target ? "good" : "warn"
+    });
+  }
+}
+
 function confirmGameProposal(index = 0) {
+  lastActionMessage = "";
   const proposal = gameProposals[index];
   if (!proposal) return false;
   const playerId = currentPersonaId();
   const invited = proposal.sentTo.find((player) => (player.playerId || playerRecordByNameOrInitials(player)?.id) === playerId);
   if (invited && proposal.ownerId !== playerId) {
+    const parsed = parseProposalTime(proposal.title);
+    const isoDate = proposal.isoDate || (parsed ? nextIsoDateForDay(parsed.day) : selectedBookingIsoDate());
+    if (parsed && playerHasTimeCollision(playerId, parsed.day, isoDate, parsed.start, parsed.end)) {
+      lastActionMessage = "Tento navrh se kryje s jinou tvoji rezervaci. Posli protinavrh na jiny cas.";
+      return false;
+    }
     invited.status = "confirmed";
   }
   const target = (proposal.gameType || "double") === "single" ? 2 : 4;
   const confirmedCount = 1 + proposal.sentTo.filter((player) => player.status === "confirmed").length;
   if (confirmedCount >= target) {
-    personalReservations.unshift(proposalToReservation(proposal));
+    const reservation = proposalToReservation(proposal);
+    personalReservations.unshift(reservation);
+    addReservationToSchedules(reservation);
     gameProposals.splice(index, 1);
     notifications.splice(0, notifications.length, ...notifications.filter((item) => item.proposalIndex !== index && item.proposalId !== proposal.id));
+    lastActionMessage = "Navrh je potvrzeny a hra byla zapsana do rezervaci i rozvrhu kurtu.";
+  } else {
+    lastActionMessage = "Ucast je potvrzena. Ceka se na doplneni sestavy.";
   }
   persistData();
   return true;
@@ -2772,6 +3119,7 @@ function confirmGameProposalById(proposalId) {
 }
 
 function acceptReplacementCandidate(reservationIndex = 3, candidateId = "") {
+  lastActionMessage = "";
   const reservation = personalReservations[reservationIndex];
   if (!reservation?.attendance) return false;
   const vote = notifications.find((item) =>
@@ -2787,6 +3135,7 @@ function acceptReplacementCandidate(reservationIndex = 3, candidateId = "") {
   const requiredVotes = vote ? Math.max(1, Math.ceil((vote.recipients?.length || 1) / 2)) : 1;
   if (vote && voteCount < requiredVotes) {
     vote.status = `${voteCount}/${requiredVotes} hlasu`;
+    lastActionMessage = `Hlas je ulozeny. K vyberu nahradnika chybi ${requiredVotes - voteCount} hlas.`;
     persistData();
     return true;
   }
@@ -2799,9 +3148,23 @@ function acceptReplacementCandidate(reservationIndex = 3, candidateId = "") {
     replacement.status = "replacement";
     replacement.role = "vybran hlasovanim";
   }
+  reservation.players = normalizedAttendance(reservation).filter(activeForGame).map((player) => player.name);
+  const linked = courtReservationById(reservation.id);
+  if (linked) {
+    linked.reservation.players = [...reservation.players];
+    linked.reservation.type = "mine";
+    linked.reservation.title = reservation.gameType === "single" ? "Dvouhra potvrzena" : "Ctyrhra potvrzena";
+  }
+  const admin = adminReservations.find((item) => item.reservationId === reservation.id);
+  if (admin) {
+    admin.status = "Plna sestava";
+    admin.players = `${reservation.players.length}/${reservationTargetPlayers(reservation)}`;
+    admin.tone = "good";
+  }
   notifications.splice(0, notifications.length, ...notifications.filter((item) =>
     !(item.type === "replacement" && item.reservationIndex === Number(reservationIndex))
   ));
+  lastActionMessage = "Nahradnik byl vybran hlasovanim a sestava je znovu kompletni.";
   persistData();
   return true;
 }
@@ -2861,7 +3224,7 @@ function render() {
   updateAppBadge();
 }
 
-function renderNavigation() {
+function legacyRenderNavigationA() {
   applyClubBranding();
   const limitedRole = ["guest", "stringer", "seller"].includes(state.role);
   const navItems = state.role === "admin"
@@ -2902,7 +3265,7 @@ function renderNavigation() {
     button.classList.toggle("active", sameRole && samePersona);
   });
   const creditBadge = document.querySelector("#creditBadge");
-  if (creditBadge) creditBadge.textContent = formatMoney(currentUser.credit, currentUser.currency);
+  if (creditBadge) creditBadge.textContent = state.role === "guest" ? "Neprihlasen" : formatMoney(currentUser.credit, currentUser.currency);
   const headerName = document.querySelector(".topbar .muted");
   if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? "Spravce klubu" : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
   const loginInitials = document.querySelector("#loginButton span");
@@ -2911,7 +3274,7 @@ function renderNavigation() {
   if (clubHoursLabel) clubHoursLabel.textContent = `${club.open}-${club.close}`;
 }
 
-function renderNavigation() {
+function legacyRenderNavigationB() {
   const limitedRole = ["guest", "stringer", "seller"].includes(state.role);
   const navItems = state.role === "admin"
     ? [
@@ -2953,7 +3316,7 @@ function renderNavigation() {
     button.classList.toggle("active", sameRole && samePersona);
   });
   const creditBadge = document.querySelector("#creditBadge");
-  if (creditBadge) creditBadge.textContent = formatMoney(currentUser.credit, currentUser.currency);
+  if (creditBadge) creditBadge.textContent = state.role === "guest" ? "Neprihlasen" : formatMoney(currentUser.credit, currentUser.currency);
   const headerName = document.querySelector(".topbar .muted");
   if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? "Spravce klubu" : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
   const loginInitials = document.querySelector("#loginButton span");
@@ -2962,7 +3325,7 @@ function renderNavigation() {
   if (clubHoursLabel) clubHoursLabel.textContent = `${club.open}-${club.close}`;
 }
 
-function renderHome() {
+function legacyRenderHome() {
   const nextReservation = nextVisibleReservation();
   return `
     <section class="view">
@@ -3010,6 +3373,16 @@ function renderGuestHome() {
       <section class="section guest-entry">
         <div class="section-head">
           <div>
+            <h2>Prihlaseni do portalu</h2>
+            <p class="muted">Pro rezervace, pozvanky a zpravy se prihlas svym testovacim e-mailem.</p>
+          </div>
+          <span class="pill">hrac / spravce</span>
+        </div>
+        <button class="primary-button" data-action="login">Prihlasit hrace</button>
+      </section>
+      <section class="section guest-entry">
+        <div class="section-head">
+          <div>
             <h2>Hostovska rezervace</h2>
             <p class="muted">Minimum kroku: telefon nebo e-mail, jednorazovy kod, vyber slotu a QR zaloha.</p>
           </div>
@@ -3020,7 +3393,7 @@ function renderGuestHome() {
           <div><strong>2</strong><span>Slot</span></div>
           <div><strong>3</strong><span>QR</span></div>
         </div>
-        <button class="primary-button" data-action="guest">Zacit jako host</button>
+        <button class="secondary-button" data-action="guest">Zacit jako host</button>
       </section>
       ${courtDayOverview()}
     </section>
@@ -3101,7 +3474,7 @@ function renderSellerHome() {
   `;
 }
 
-function clubShopSection() {
+function legacyClubShopSection() {
   return `
     <section class="section shop-section">
       <div class="section-head">
@@ -3161,7 +3534,7 @@ function playerOrdersSection() {
   `;
 }
 
-function gameProposalSection() {
+function legacyGameProposalSection() {
   const collapsed = state.collapsedSections.has("proposals");
   const proposals = visibleGameProposals();
   return `
@@ -3202,7 +3575,7 @@ function gameProposalSection() {
   `;
 }
 
-function notificationCenter() {
+function legacyNotificationCenter() {
   const visible = visibleNotifications();
   const attendanceNotice = visible.find((item) => item.type === "attendance" && item.status !== "Tvoje ucast potvrzena");
   const collapsed = state.collapsedSections.has("notifications");
@@ -3300,7 +3673,7 @@ function monthCalendar(title = "Kalendar", joined = []) {
   `;
 }
 
-function reservationCard(reservation) {
+function legacyReservationCard(reservation) {
   const minutes = timeToMinutes(reservation.end) - timeToMinutes(reservation.start);
   const hours = minutes / 60;
   const attendance = reservation.attendance || reservation.players.map((name) => ({
@@ -3318,7 +3691,7 @@ function reservationCard(reservation) {
   return `
     <article class="reservation-card reservation-${reservationState} ${reservation.court.surfaceClass}">
       <div>
-        <strong>${fullDayName(reservation.day)} ${reservation.date}.6. · ${reservation.start}-${reservation.end}</strong>
+        <strong>${reservationDateLabel(reservation)} · ${reservation.start}-${reservation.end}</strong>
         <small>${reservation.kind} · ${reservationGameLabel(reservation)} · ${reservation.court.name} · ${reservation.court.surface} · ${hours} h hry</small>
       </div>
       <span class="reservation-state">${reservationLabel}</span>
@@ -3346,10 +3719,12 @@ function eventCalendarCard(event) {
 }
 
 function calendarDay(day, joined) {
-  const hasReservation = visibleReservations().some((reservation) => Number(reservation.date) === Number(day) && state.calendarMonth === 5);
-  const hasEvent = joined.some((event) => event.date === "Ne" && Number(day) === 21 && state.calendarMonth === 5);
+  if (!day) return `<span class="calendar-day is-empty" aria-hidden="true"></span>`;
+  const isoDate = dateToIso(new Date(state.calendarYear, state.calendarMonth, Number(day), 12));
+  const hasReservation = visibleReservations().some((reservation) => reservationIsoDate(reservation) === isoDate);
+  const hasEvent = joined.some((event) => event.isoDate === isoDate);
   const className = [hasReservation ? "has-reservation" : "", hasEvent ? "has-event" : ""].filter(Boolean).join(" ");
-  return `<button class="calendar-day ${className}" data-action="book" data-time="17:00">${day || ""}</button>`;
+  return `<button class="calendar-day ${className}" data-calendar-date="${isoDate}">${day}</button>`;
 }
 
 function courtDayOverview() {
@@ -3452,7 +3827,7 @@ function reservationCard(reservation) {
       <div class="reservation-main reservation-block">
         <span class="reservation-icon">${reservation.court.surface === "Antuka" ? "A" : reservation.court.surface === "Trava" ? "T" : "U"}</span>
         <span>
-          <strong>${fullDayName(reservation.day)} ${reservation.date}.6. · ${reservation.start}-${reservation.end}</strong>
+          <strong>${reservationDateLabel(reservation)} · ${reservation.start}-${reservation.end}</strong>
           <small>${reservation.kind} · ${reservationGameLabel(reservation)} · ${reservation.court.name} · ${reservation.court.surface} · ${hours} h hry</small>
         </span>
       </div>
@@ -3481,6 +3856,8 @@ function reservationCard(reservation) {
 }
 
 function renderBooking() {
+  const selectedDate = selectedBookingDateObject();
+  const selectedDateText = formatPortalDate(selectedDate, false);
   return `
     <section class="view booking-view">
       <section class="section">
@@ -3489,7 +3866,7 @@ function renderBooking() {
             <h2>Rezervace kurtu</h2>
             <p class="muted">Vyber den v tydnu, mesic nebo primo volny slot u kurtu.</p>
           </div>
-          <span class="pill">${days[state.selectedDay]}</span>
+          <span class="pill">${selectedDateText}</span>
         </div>
         ${weekChooser()}
       </section>
@@ -3498,7 +3875,7 @@ function renderBooking() {
 
       <section class="section schedule-section">
         <div class="section-head compact-head">
-          <h2>Kurty pro ${days[state.selectedDay].toLowerCase()}</h2>
+          <h2>Kurty pro ${selectedDateText}</h2>
           <span class="pill">30 min</span>
         </div>
         <div class="booking-court-list">
@@ -3515,7 +3892,11 @@ function renderBooking() {
 function weekChooser() {
   return `
     <div class="week-grid">
-      ${days.map((day, index) => `<button class="week-day ${state.selectedDay === index ? "active" : ""}" data-day="${index}"><strong>${day}</strong><small>${index === 0 ? "dnes" : `${14 + index}.6.`}</small></button>`).join("")}
+      ${days.map((day, index) => {
+        const date = dateForWeekIndex(index);
+        const selected = !state.selectedBookingDate && state.selectedDay === index;
+        return `<button class="week-day ${selected ? "active" : ""}" data-day="${index}"><strong>${day}</strong><small>${index === 0 ? "dnes" : `${date.getDate()}.${date.getMonth() + 1}.`}</small></button>`;
+      }).join("")}
     </div>
   `;
 }
@@ -3606,7 +3987,6 @@ function renderPlayers() {
         </div>
         ${seekingPlayers.length ? playerList(seekingPlayers, "seeking-list") : `<div class="history-card compact-empty"><strong>Nikdo ted nehleda</strong><small>Jakmile nekdo vytvori poptavku, objevi se tady.</small></div>`}
       </section>
-      ${playerTournamentSection()}
       <section class="section">
         <div class="section-head">
           <h2>Moji kamaradi</h2>
@@ -3659,6 +4039,7 @@ function renderEvents() {
         </div>
         ${eventList(publicEvents())}
       </section>
+      ${playerTournamentSection()}
       <section class="section">
         <div class="section-head">
           <div>
@@ -3761,7 +4142,7 @@ function eventList(items) {
   `;
 }
 
-function renderProfile() {
+function legacyRenderProfile() {
   const charge = courtCharge(240, 1.5, currentUser);
   const loyalty = loyaltyProgress(currentUser);
   const nextMissingHours = Math.max(0, loyalty.next.hours - currentUser.playedHours);
@@ -4144,7 +4525,7 @@ function renderNavigation() {
     button.classList.toggle("active", sameRole && samePersona);
   });
   const creditBadge = document.querySelector("#creditBadge");
-  if (creditBadge) creditBadge.textContent = formatMoney(currentUser.credit, currentUser.currency);
+  if (creditBadge) creditBadge.textContent = state.role === "guest" ? "Neprihlasen" : formatMoney(currentUser.credit, currentUser.currency);
   const headerName = document.querySelector(".topbar .muted");
   if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? "Spravce klubu" : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
   const loginInitials = document.querySelector("#loginButton span");
@@ -4587,7 +4968,10 @@ function renderAdminReservations() {
 
       <section class="section">
         <div class="admin-reservation-list">
-          ${adminReservations.map((item) => `
+          ${adminReservations.filter((item) => {
+            const reservation = item.reservationId ? reservationById(item.reservationId) : null;
+            return !reservation || (reservation.status !== "cancelled" && reservationIsoDate(reservation) === selectedBookingIsoDate());
+          }).map((item) => `
             <button class="admin-reservation ${item.tone}" data-action="admin-reservation" data-reservation-id="${item.reservationId || ""}">
               <span class="admin-time">${item.time}</span>
               <span>
@@ -4980,7 +5364,7 @@ function openModal(kind, data = {}) {
 
 function bookingModal(data) {
   const selectedCourt = courtFromBookingValue(data.court);
-  const selectedDateLabel = `${bookingDayNameForSelectedDay()} ${bookingDateForSelectedDay()}.6.`;
+  const selectedDateLabel = formatPortalDate(selectedBookingDateObject());
   const playerOptions = players
     .filter((player) => player.id !== currentPersonaId())
     .map((player) => `<option value="${player.id}">${player.name} · ${player.level}</option>`)
@@ -5014,7 +5398,7 @@ function cancelModal(data = {}) {
       <div>
         <p class="eyebrow">Trvala rezervace</p>
         <h2 id="modalTitle">Omluvit se z terminu?</h2>
-        <p class="muted">${fullDayName(reservation.day)} ${reservation.date}.6. ${reservation.start}-${reservation.end}, ${reservation.court.name}. Ostatnim se hned spusti hledani a hlasovani o nahradnikovi.</p>
+        <p class="muted">${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}, ${reservation.court.name}. Ostatnim se hned spusti hledani a hlasovani o nahradnikovi.</p>
       </div>
       <div class="form-grid">
         <div class="field"><label>Duvod</label><select><option>Jsem nemocny</option><option>Nemame hrace do ctyrhry</option><option>Pracovni duvody</option><option>Jine</option></select></div>
@@ -5071,7 +5455,7 @@ function playerDetailModal(data) {
   `;
 }
 
-function invitePlayerModal(data) {
+function legacyInvitePlayerModal(data) {
   const player = players.find((item) => item.id === data.player) || players[0];
   return `
     <div class="modal-body">
@@ -5182,7 +5566,7 @@ function reservationDetailModal(data) {
     <div class="modal-body reservation-detail-modal">
       <div>
         <p class="eyebrow">Detail rezervace</p>
-        <h2 id="modalTitle">${fullDayName(reservation.day)} ${reservation.date}.6. · ${reservation.start}-${reservation.end}</h2>
+        <h2 id="modalTitle">${reservationDateLabel(reservation)} · ${reservation.start}-${reservation.end}</h2>
         <p class="muted">${reservation.kind} · ${reservation.court.name} · ${reservation.court.surface}</p>
       </div>
       <img class="modal-court-image" src="${reservation.court.photo}" alt="${reservation.court.name}">
@@ -5462,7 +5846,7 @@ function notificationDetailModal(data = {}) {
       <div class="modal-body">
         <div>
           <p class="eyebrow">Potvrzeni ucasti</p>
-          <h2 id="modalTitle">${fullDayName(reservation.day)} ${reservation.date}.6. ${reservation.start}-${reservation.end}</h2>
+          <h2 id="modalTitle">${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}</h2>
           <p class="muted">${reservation.court.name}, ${reservation.court.surface}. Kdyz nemuzes, oznameni zmizi a system hned spusti hledani nahradnika.</p>
         </div>
         <div class="profile-list">
@@ -5502,7 +5886,7 @@ function notificationDetailModal(data = {}) {
       <div class="modal-body">
         <div>
           <p class="eyebrow">Pozvanka jako nahradnik</p>
-          <h2 id="modalTitle">${fullDayName(reservation.day)} ${reservation.date}.6. ${reservation.start}-${reservation.end}</h2>
+          <h2 id="modalTitle">${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}</h2>
           <p class="muted">${reservation.court.name}, ${reservation.court.surface}. Po potvrzeni se objevis v sestave jako nahradnik a oznameni zmizi.</p>
         </div>
         <div class="profile-list">
@@ -5542,7 +5926,7 @@ function notificationDetailModal(data = {}) {
         <div>
           <p class="eyebrow">Hlasovani o nahradnikovi</p>
           <h2 id="modalTitle">${candidate.name}</h2>
-          <p class="muted">${fullDayName(reservation.day)} ${reservation.date}.6. ${reservation.start}-${reservation.end}, ${reservation.court.name}. Hlas potvrdi nahradnika do sestavy.</p>
+          <p class="muted">${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}, ${reservation.court.name}. Hlas potvrdi nahradnika do sestavy.</p>
         </div>
         <div class="profile-list">
           <div class="profile-row"><span>Typ hry</span><span>${reservationGameLabel(reservation)}</span></div>
@@ -5663,7 +6047,7 @@ function adminReservationModal(data = {}) {
   `;
 }
 
-function adminPlayerModal(data) {
+function legacyAdminPlayerModal(data) {
   const player = adminPlayerDirectory.find((item) => item.id === data.player) || adminPlayerDirectory[0];
   const basePrice = 240;
   const charge = courtCharge(basePrice, 1.5, player);
@@ -5931,7 +6315,7 @@ function productPollModal(data) {
         </div>
         <div class="form-grid">
           <div class="field"><label>Otazka</label><input id="pollTitleInput" value="Co chcete otestovat na kurtech?"></div>
-          <div class="field"><label>Bezi do</label><input id="pollEndInput" value="18.6."></div>
+          <div class="field"><label>Bezi do</label><input id="pollEndInput" value="${formatShortPortalDate(new Date(appToday.getFullYear(), appToday.getMonth(), appToday.getDate() + 3))}"></div>
           <div class="field"><label>Moznosti</label><textarea id="pollOptionsInput">A - rakety Babolat
 B - rakety Wilson
 C - boty Wilson
@@ -6028,7 +6412,7 @@ function specialOccupancyModal(data) {
   `;
 }
 
-function productOrderModal(data) {
+function legacyProductOrderModal(data) {
   const item = clubShopItems.find((product) => product.title === data.product) || clubShopItems[0];
   return `
     <div class="modal-body">
@@ -6073,7 +6457,7 @@ function productOrderModal(data) {
       <div class="form-grid">
         <div class="field"><label>Jak to chci resit</label><select id="orderDeliveryInput"><option value="pickup">Vyzvednout na klubu</option><option value="reservation" selected>Pridat k me pristi rezervaci</option><option value="event">Pridat do nejblizsi akce</option></select></div>
         <div class="field"><label>Kdy vyzvednout na klubu</label><input id="orderPickupInput" value="Patek 17:00"></div>
-        <div class="field"><label>Moje rezervace</label><select id="orderReservationInput">${reservations.map((reservation, index) => `<option value="${index}">${fullDayName(reservation.day)} ${reservation.date}.6. ${reservation.start}, ${reservation.court.name}</option>`).join("")}</select></div>
+        <div class="field"><label>Moje rezervace</label><select id="orderReservationInput">${reservations.map((reservation, index) => `<option value="${index}">${reservationDateLabel(reservation)} ${reservation.start}, ${reservation.court.name}</option>`).join("")}</select></div>
         <div class="field"><label>Akce</label><select id="orderEventInput">${events.map((event) => `<option value="${event.id}">${event.title} · ${event.meta}</option>`).join("")}</select></div>
         ${stringing ? `
           <div class="field"><label>Raketa</label><input value="Moje hlavni raketa"></div>
@@ -6189,6 +6573,8 @@ function knockoutList(tournament) {
 
 function tournamentDetailModal(data) {
   const tournament = tournamentById(data.tournament);
+  const currentName = currentUser.name.split(" ")[0];
+  const registered = tournament.participants.includes(currentName);
   return `
     <div class="modal-body">
       <div>
@@ -6207,6 +6593,7 @@ function tournamentDetailModal(data) {
       </div>
       ${tournamentTables(tournament)}
       ${knockoutList(tournament)}
+      ${tournament.status === "registration" && state.role === "player" ? `<button class="primary-button" data-confirm="tournament-register" data-tournament="${tournament.id}">${registered ? "Odhlasit se" : "Prihlasit se"}</button>` : ""}
       <button class="primary-button" data-confirm="close">Zavrit</button>
     </div>
   `;
@@ -6215,6 +6602,8 @@ function tournamentDetailModal(data) {
 function tournamentAdminModal(data) {
   const tournament = data.tournament ? tournamentById(data.tournament) : null;
   if (!tournament) {
+    const tournamentDate = nextTournamentSaturday();
+    const deadlineDate = new Date(tournamentDate.getFullYear(), tournamentDate.getMonth(), tournamentDate.getDate() - 2);
     return `
       <div class="modal-body">
         <div>
@@ -6224,8 +6613,8 @@ function tournamentAdminModal(data) {
         </div>
         <div class="form-grid">
           <div class="field"><label>Nazev</label><input id="tournamentTitleInput" value="Klubovy single turnaj"></div>
-          <div class="field"><label>Start</label><input id="tournamentDateInput" value="Sobota 9:00"></div>
-          <div class="field"><label>Uzaverka</label><input id="tournamentDeadlineInput" value="Ctvrtek 20:00"></div>
+          <div class="field"><label>Start</label><input id="tournamentDateInput" value="${formatPortalDate(tournamentDate)} 9:00"></div>
+          <div class="field"><label>Uzaverka</label><input id="tournamentDeadlineInput" value="${formatPortalDate(deadlineDate)} 20:00"></div>
           <div class="field"><label>Max hracu</label><input id="tournamentMaxInput" value="16"></div>
         </div>
         <button class="primary-button" data-confirm="tournament-create">Vytvorit turnaj</button>
@@ -6352,6 +6741,7 @@ document.addEventListener("click", (event) => {
   const link = event.target.closest("[data-view-link]");
   const action = event.target.closest("[data-action]");
   const day = event.target.closest("[data-day]");
+  const calendarDate = event.target.closest("[data-calendar-date]");
   const month = event.target.closest("[data-month-delta]");
   const priceRule = event.target.closest("[data-price-rule]");
   const priceSlot = event.target.closest("[data-price-slot]");
@@ -6377,7 +6767,18 @@ document.addEventListener("click", (event) => {
 
   if (day) {
     state.selectedDay = Number(day.dataset.day);
+    state.selectedBookingDate = "";
     render();
+  }
+
+  if (calendarDate) {
+    state.selectedBookingDate = calendarDate.dataset.calendarDate;
+    const selected = dateFromIso(state.selectedBookingDate);
+    if (selected) {
+      const delta = Math.round((selected.getTime() - appToday.getTime()) / 86400000);
+      if (delta >= 0 && delta <= 6) state.selectedDay = delta;
+    }
+    openModal("book", { time: "17:00" });
   }
 
   if (month) {
@@ -6432,7 +6833,10 @@ document.addEventListener("click", (event) => {
       }
       return;
     }
-    if (kind === "book") createBookingReservation();
+    if (kind === "book" && !createBookingReservation()) {
+      showToast(lastActionMessage || "Rezervaci se nepodarilo vytvorit.");
+      return;
+    }
     if (kind === "cancel") declineReservation(Number(confirm.dataset.reservation || 0));
     if (kind === "find-player") createPlayerSearch();
     if (kind === "join" && confirm.dataset.event) {
@@ -6442,7 +6846,12 @@ document.addEventListener("click", (event) => {
     if (kind === "guest") state.guestMode = true;
     if (kind === "attendance") confirmAttendanceFromNotification(confirm.dataset.notification);
     if (kind === "decline-attendance") declineAttendanceFromNotification(confirm.dataset.notification);
-    if (kind === "invite-game" && confirm.dataset.proposal) confirmGameProposal(Number(confirm.dataset.proposal || 0));
+    if (kind === "invite-game" && confirm.dataset.proposal) {
+      if (!confirmGameProposal(Number(confirm.dataset.proposal || 0))) {
+        showToast(lastActionMessage || "Navrh se nepodarilo potvrdit.");
+        return;
+      }
+    }
     if (kind === "invite-game" && !confirm.dataset.proposal) {
       if (!createGameInvitation()) {
         showToast(lastActionMessage || "Pozvanku se nepodarilo odeslat.");
@@ -6486,6 +6895,7 @@ document.addEventListener("click", (event) => {
     if (kind === "poll-remind") remindPollVoters(confirm.dataset.poll);
     if (kind === "poll-close") closePollToEvent(confirm.dataset.poll);
     if (kind === "tournament-create") createSingleTournamentFromModal();
+    if (kind === "tournament-register") toggleTournamentRegistration(confirm.dataset.tournament);
     if (kind === "tournament-groups") generateTournamentGroups(confirm.dataset.tournament);
     if (kind === "tournament-results") recordDemoTournamentResults(confirm.dataset.tournament);
     if (kind === "tournament-knockout") generateTournamentKnockout(confirm.dataset.tournament);
@@ -6496,12 +6906,12 @@ document.addEventListener("click", (event) => {
     closeModal();
     render();
     const messages = {
-      book: "Rezervace je v prototypu potvrzena.",
-      cancel: "Termin trvale rezervace je zruseny jen pro tento tyden.",
+      book: "Rezervace byla ulozena a propsana ostatnim hracum.",
+      cancel: "Ucast byla zrusena. Ostatnim hracum se spustilo hledani nahradnika.",
       "find-player": "Poptavka na spoluhrace je zverejnena.",
       contact: "Zprava hraci je pripravena k odeslani.",
       login: "Overovaci kod by prisel na telefon nebo e-mail.",
-      event: "Akce je ulozena v navrhu administrace.",
+      event: "Akce byla ulozena do administrace.",
       join: "Jste prihlasen na akci.",
       invite: "Pozvanka pro kamarada je pripravena.",
       "invite-game": "Pozvanka na hru byla odeslana.",
@@ -6526,10 +6936,10 @@ document.addEventListener("click", (event) => {
       guest: "Hostovsky tok je pripraveny: kod, rezervace a QR zaloha.",
       "admin-save": "Spravcovska zmena je v prototypu pripravena.",
       "admin-settings-save": "Nastaveni klubu je ulozene.",
-      "admin-court-save": "Kurt je ulozeny v testovacich datech.",
+      "admin-court-save": "Kurt byl ulozen.",
       "admin-court-delete": "Kurt je odebrany z klubu. Posledni kurt zustava chraneny.",
-      "admin-player-save": "Karta hrace je ulozena v testovacich datech.",
-      "admin-event-save": "Akce a jeji obrazek jsou ulozene v testovacich datech.",
+      "admin-player-save": "Karta hrace byla ulozena.",
+      "admin-event-save": "Akce a jeji obrazek byly ulozeny.",
       "seller-request": "Navrh akce byl poslan obchodnikovi ke schvaleni.",
       "seller-confirm-event": "Obchodnik potvrdil termin a dodavku.",
       "event-publish": "Akce je publikovana hracum.",
@@ -6544,6 +6954,7 @@ document.addEventListener("click", (event) => {
       "poll-remind": "Pripominka ankety byla poslana hracum bez hlasu.",
       "poll-close": "Anketa je ukoncena a z vysledku vznikla testovaci akce.",
       "tournament-create": "Single turnaj je vytvoreny.",
+      "tournament-register": "Registrace turnaje byla aktualizovana.",
       "tournament-groups": "Prihlasky jsou uzavrene a skupiny vylosovane.",
       "tournament-results": "Demo vysledky skupin jsou doplnene.",
       "tournament-knockout": "Pavouk je vytvoreny podle skupin.",
@@ -6556,7 +6967,9 @@ document.addEventListener("click", (event) => {
       "stringing-delivered": "Klub oznacil raketu jako predanou hraci.",
       close: "Zavreno."
     };
-    showToast(messages[kind]);
+    const feedback = lastActionMessage || messages[kind];
+    lastActionMessage = "";
+    showToast(feedback);
   }
 });
 

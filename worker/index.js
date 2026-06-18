@@ -97,6 +97,16 @@ async function handleRequest(request, env) {
       return json({ ok: false, error: "Missing state" }, 400);
     }
 
+    const current = await getStoredState(env);
+    if (payload.baseUpdatedAt && current.updatedAt && payload.baseUpdatedAt !== current.updatedAt) {
+      return json({
+        ok: false,
+        error: "State conflict",
+        updatedAt: current.updatedAt,
+        state: current.state
+      }, 409);
+    }
+
     const updatedAt = await saveState(env, payload.state);
     return json({
       ok: true,

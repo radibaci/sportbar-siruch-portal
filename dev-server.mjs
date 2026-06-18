@@ -113,6 +113,16 @@ async function handleApi(request, response, url) {
         sendJson(response, 400, { ok: false, error: "Missing state" });
         return true;
       }
+      const current = readDb();
+      if (payload.baseUpdatedAt && current.updatedAt && payload.baseUpdatedAt !== current.updatedAt) {
+        sendJson(response, 409, {
+          ok: false,
+          error: "State conflict",
+          updatedAt: current.updatedAt,
+          state: current.state
+        });
+        return true;
+      }
       const db = {
         updatedAt: new Date().toISOString(),
         state: payload.state
