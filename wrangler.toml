@@ -1,0 +1,8 @@
+name = "sportbar-siruch-api"
+main = "worker/index.js"
+compatibility_date = "2026-06-18"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sportbar_siruch_portal"
+database_id = "d3d4fa00-4ad8-4aa3-8fc9-6f0581a1939a"
