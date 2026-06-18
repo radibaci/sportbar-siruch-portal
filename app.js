@@ -650,6 +650,10 @@ const LOGIN_SESSION_KEY = "tennis-club-login-session";
 let sharedApiOnline = false;
 let suppressRemotePersist = false;
 let loginPromptShown = false;
+let remoteUpdatedAt = "";
+let lastLocalPersistAt = 0;
+let syncTimer = null;
+let lastActionMessage = "";
 
 function isLocalTestingMode() {
   return ["localhost", "127.0.0.1", "::1", ""].includes(window.location.hostname);
@@ -763,6 +767,7 @@ function applyStoredState(saved) {
 
 function persistData() {
   const payload = portalStatePayload();
+  lastLocalPersistAt = Date.now();
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch (_) {}
@@ -772,7 +777,11 @@ function persistData() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ state: payload })
-    }).catch(() => {
+    }).then((response) => response.ok ? response.json() : null)
+      .then((result) => {
+        if (result?.updatedAt) remoteUpdatedAt = result.updatedAt;
+      })
+      .catch(() => {
       sharedApiOnline = false;
       showToast("API je nedostupne, zmeny jsou zatim jen v tomto zarizeni.");
     });
@@ -785,6 +794,7 @@ async function hydrateStoredData() {
     if (response.ok) {
       const payload = await response.json();
       sharedApiOnline = true;
+      if (payload.updatedAt) remoteUpdatedAt = payload.updatedAt;
       if (payload.state && applyStoredState(payload.state)) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.state));
         return "api";
@@ -804,6 +814,40 @@ async function hydrateStoredData() {
     if (applyStoredState(saved)) return sharedApiOnline ? "seed" : "local";
   } catch (_) {}
   return sharedApiOnline ? "seed" : "default";
+}
+
+async function syncRemoteState({ silent = true } = {}) {
+  if (!sharedApiOnline) return false;
+  if (Date.now() - lastLocalPersistAt < 1200) return false;
+  try {
+    const response = await fetch(apiUrl("/api/state"), { cache: "no-store" });
+    if (!response.ok) return false;
+    const payload = await response.json();
+    sharedApiOnline = true;
+    if (!payload.state || !payload.updatedAt || payload.updatedAt === remoteUpdatedAt) return false;
+    if (!applyStoredState(payload.state)) return false;
+    remoteUpdatedAt = payload.updatedAt;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.state));
+    } catch (_) {}
+    render();
+    if (!silent && visibleNotifications().length) showToast("Dorazila nova zprava v portalu.");
+    return true;
+  } catch (_) {
+    sharedApiOnline = false;
+    return false;
+  }
+}
+
+function startRemoteSync() {
+  if (syncTimer || !API_BASE) return;
+  syncTimer = window.setInterval(() => {
+    syncRemoteState({ silent: false });
+  }, 4000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) syncRemoteState({ silent: false });
+  });
+  window.addEventListener("focus", () => syncRemoteState({ silent: false }));
 }
 
 function timeToMinutes(time) {
@@ -997,8 +1041,32 @@ function reservationHasAnyPlayer(reservation, playerId = currentPersonaId()) {
   return normalizedAttendance(reservation).some((player) => player.playerId === playerId);
 }
 
+function normalizeDayKey(day = "") {
+  const value = String(day).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const map = {
+    pondeli: "Po",
+    po: "Po",
+    utery: "Ut",
+    ut: "Ut",
+    streda: "St",
+    st: "St",
+    ctvrtek: "Ct",
+    ct: "Ct",
+    patek: "Pa",
+    pa: "Pa",
+    sobota: "So",
+    so: "So",
+    nedele: "Ne",
+    ne: "Ne",
+    dnes: "Dnes",
+    zitra: "Zitra"
+  };
+  return map[value] || day;
+}
+
 function sameReservationDay(reservation, day, date) {
-  return String(reservation.date || "") === String(date || "") || reservation.day === day;
+  const sameDate = date && String(reservation.date || "") === String(date || "");
+  return sameDate || normalizeDayKey(reservation.day) === normalizeDayKey(day);
 }
 
 function timeRangesOverlap(startA, endA, startB, endB) {
@@ -1829,7 +1897,7 @@ function selectedInvitees(maxCount = 4) {
 
 function parseProposalTime(value = "") {
   const match = value.match(/^\s*(\S+)\s+(\d{1,2}:\d{2})-(\d{1,2}:\d{2})/);
-  return match ? { day: match[1], date: "", start: match[2], end: match[3] } : null;
+  return match ? { day: normalizeDayKey(match[1]), date: "", start: match[2], end: match[3] } : null;
 }
 
 function createGameInvitation() {
@@ -1934,21 +2002,34 @@ function saveAdminOrder(product, player) {
 }
 
 function createGameInvitation() {
+  lastActionMessage = "";
   const gameType = document.querySelector("#inviteGameType")?.value || "double";
   const maxInvitees = gameType === "single" ? 1 : 3;
   const rawInvitees = selectedInvitees(maxInvitees);
-  if (!rawInvitees.length) return false;
+  if (!rawInvitees.length) {
+    lastActionMessage = "Vyber aspon jednoho hrace.";
+    return false;
+  }
   const time = document.querySelector("#inviteTimeInput")?.value || "Patek 17:00-18:30";
   const court = document.querySelector("#inviteCourtInput")?.value || "Kurt 1 · Antuka";
   const parsed = parseProposalTime(time);
-  if (parsed && playerHasTimeCollision(currentPersonaId(), parsed.day, parsed.date, parsed.start, parsed.end)) return false;
+  if (parsed && playerHasTimeCollision(currentPersonaId(), parsed.day, parsed.date, parsed.start, parsed.end)) {
+    lastActionMessage = "V tomto case uz mas rezervaci. Vyber jiny termin.";
+    return false;
+  }
   const duplicate = gameProposals.find((proposal) => proposal.ownerId === currentPersonaId() && proposal.title === time && proposal.court === court);
   const already = duplicate ? new Set(duplicate.sentTo.map((player) => player.playerId)) : new Set();
   const invitees = rawInvitees.filter((id) =>
     !already.has(id) &&
     (!parsed || !playerHasTimeCollision(id, parsed.day, parsed.date, parsed.start, parsed.end))
   );
-  if (!invitees.length) return false;
+  if (!invitees.length) {
+    const blockedNames = rawInvitees
+      .map((id) => playerRecordById(id)?.name || id)
+      .join(", ");
+    lastActionMessage = `${blockedNames} uz v tomto case hraje nebo uz ma pozvanku. Vyber jiny termin.`;
+    return false;
+  }
   const owner = currentPlayerRecord();
   const proposal = duplicate || {
     id: `proposal-${Date.now()}`,
@@ -6362,7 +6443,12 @@ document.addEventListener("click", (event) => {
     if (kind === "attendance") confirmAttendanceFromNotification(confirm.dataset.notification);
     if (kind === "decline-attendance") declineAttendanceFromNotification(confirm.dataset.notification);
     if (kind === "invite-game" && confirm.dataset.proposal) confirmGameProposal(Number(confirm.dataset.proposal || 0));
-    if (kind === "invite-game" && !confirm.dataset.proposal) createGameInvitation();
+    if (kind === "invite-game" && !confirm.dataset.proposal) {
+      if (!createGameInvitation()) {
+        showToast(lastActionMessage || "Pozvanku se nepodarilo odeslat.");
+        return;
+      }
+    }
     if (kind === "invite-event") createEventInvitation(confirm.dataset.event);
     if (kind === "accept-invite") confirmGameProposalById(confirm.dataset.proposalId);
     if (kind === "decline-invite") declineGameProposal(confirm.dataset.proposalId);
@@ -6498,6 +6584,7 @@ async function bootPortal() {
   }
 
   render();
+  startRemoteSync();
   if (!isLocalTestingMode() && !hasSession && !loginPromptShown) {
     loginPromptShown = true;
     window.setTimeout(() => openModal("login"), 300);

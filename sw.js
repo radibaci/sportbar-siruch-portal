@@ -1,10 +1,10 @@
-const CACHE_NAME = "tennis-club-portal-v59";
+const CACHE_NAME = "tennis-club-portal-v62";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=55",
-  "./app.js?v=55",
-  "./manifest.webmanifest?v=55",
+  "./styles.css?v=58",
+  "./app.js?v=58",
+  "./manifest.webmanifest?v=58",
   "./assets/app-icon-192.png?v=54",
   "./assets/app-icon-512.png?v=54",
   "./assets/club-logo-dm.png?v=54",
