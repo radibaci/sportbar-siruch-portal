@@ -1,7 +1,7 @@
 const club = {
   name: "Sportbar Siruch",
   logoText: "DM",
-  logoUrl: "assets/club-logo-dm-192.png?v=71",
+  logoUrl: "assets/club-logo-dm-192.png?v=72",
   open: "8:00",
   close: "21:00",
   slotMinutes: 30,
@@ -1058,6 +1058,14 @@ function formatShortPortalDate(date) {
   return `${date.getDate()}.${date.getMonth() + 1}.${date.getFullYear()}`;
 }
 
+function dateInputValue(date) {
+  return dateToIso(date);
+}
+
+function dateFromDateInput(value = "") {
+  return dateFromIso(value) || appToday;
+}
+
 function nextTournamentSaturday() {
   const date = new Date(appToday.getFullYear(), appToday.getMonth(), appToday.getDate());
   let offset = (6 - date.getDay() + 7) % 7;
@@ -1428,8 +1436,8 @@ async function sendAndroidNotificationTest() {
     const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
     await registration.showNotification(`${club.name}: ${count} zpravy`, {
       body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
-      icon: "assets/club-logo-dm-192.png?v=71",
-      badge: "assets/club-logo-dm-192.png?v=71",
+      icon: "assets/club-logo-dm-192.png?v=72",
+      badge: "assets/club-logo-dm-192.png?v=72",
       tag: `siruch-test-${Date.now()}`,
       renotify: false,
       data: { url: "./index.html" }
@@ -1690,8 +1698,12 @@ function tournamentById(id = "") {
 
 function createSingleTournamentFromModal() {
   const title = document.querySelector("#tournamentTitleInput")?.value?.trim() || "Novy single turnaj";
-  const date = document.querySelector("#tournamentDateInput")?.value?.trim() || "Sobota 9:00";
-  const deadline = document.querySelector("#tournamentDeadlineInput")?.value?.trim() || "ctvrtek 20:00";
+  const startDate = dateFromDateInput(document.querySelector("#tournamentDateInput")?.value || dateInputValue(nextTournamentSaturday()));
+  const startTime = document.querySelector("#tournamentStartTimeInput")?.value || "9:00";
+  const deadlineDate = dateFromDateInput(document.querySelector("#tournamentDeadlineInput")?.value || dateInputValue(startDate));
+  const deadlineTime = document.querySelector("#tournamentDeadlineTimeInput")?.value || "20:00";
+  const date = `${formatPortalDate(startDate)} ${startTime}`;
+  const deadline = `${formatPortalDate(deadlineDate)} ${deadlineTime}`;
   const maxPlayers = Number(document.querySelector("#tournamentMaxInput")?.value || 16);
   tournaments.unshift({
     id: `single-${Date.now()}`,
@@ -1699,7 +1711,7 @@ function createSingleTournamentFromModal() {
     type: "single",
     status: "registration",
     date,
-    isoDate: dateToIso(nextTournamentSaturday()),
+    isoDate: dateToIso(startDate),
     deadline,
     courts: courts.slice(0, 3).map((court) => court.name),
     maxPlayers,
@@ -2174,8 +2186,17 @@ function selectedInvitees(maxCount = 4) {
 }
 
 function parseProposalTime(value = "") {
-  const match = value.match(/^\s*(\S+)\s+(\d{1,2}:\d{2})-(\d{1,2}:\d{2})/);
-  return match ? { day: normalizeDayKey(match[1]), date: "", start: match[2], end: match[3] } : null;
+  const timeMatch = value.match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
+  if (!timeMatch) return null;
+  const isoMatch = value.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  const czDateMatch = value.match(/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})?/);
+  let isoDate = isoMatch?.[1] || "";
+  if (!isoDate && czDateMatch) {
+    const year = Number(czDateMatch[3]) || appToday.getFullYear();
+    isoDate = dateToIso(new Date(year, Number(czDateMatch[2]) - 1, Number(czDateMatch[1])));
+  }
+  const day = isoDate ? weekdayCodes[(dateFromIso(isoDate) || appToday).getDay()] : normalizeDayKey((value.trim().split(/\s+/)[0] || "Dnes"));
+  return { day, date: isoDate, isoDate, start: timeMatch[1], end: timeMatch[2] };
 }
 
 function nextIsoDateForDay(dayKey = "Dnes") {
@@ -2186,6 +2207,37 @@ function nextIsoDateForDay(dayKey = "Dnes") {
   if (targetIndex < 0) return selectedBookingIsoDate();
   const delta = (targetIndex - appToday.getDay() + 7) % 7;
   return dateToIso(dateForWeekIndex(delta));
+}
+
+function courtFromLabel(label = "") {
+  const name = label.split("Â·")[0].split("·")[0].trim();
+  return courts.find((court) => court.name === name) || courts[0];
+}
+
+function courtHasTimeCollision(court, isoDate, start, end) {
+  return (court?.reservations || []).some((slot) =>
+    (slot.isoDate || selectedBookingIsoDate()) === isoDate &&
+    timeRangesOverlap(slot.start, slot.end, start, end)
+  );
+}
+
+function availableGameTimeOptions() {
+  const durations = [60, 90, 120];
+  const options = [];
+  for (let dayOffset = 0; dayOffset < 14; dayOffset += 1) {
+    const date = new Date(appToday.getFullYear(), appToday.getMonth(), appToday.getDate() + dayOffset);
+    const isoDate = dateToIso(date);
+    slots().forEach((start) => {
+      durations.forEach((duration) => {
+        const end = minutesToTime(timeToMinutes(start) + duration);
+        if (timeToMinutes(end) > timeToMinutes(club.close)) return;
+        const hasFreeCourt = courts.some((court) => !courtHasTimeCollision(court, isoDate, start, end));
+        if (!hasFreeCourt) return;
+        options.push(`${formatPortalDate(date)} ${start}-${end}`);
+      });
+    });
+  }
+  return options;
 }
 
 function legacyCreateGameInvitation() {
@@ -2301,15 +2353,20 @@ function createGameInvitation() {
   const time = document.querySelector("#inviteTimeInput")?.value || "Patek 17:00-18:30";
   const court = document.querySelector("#inviteCourtInput")?.value || "Kurt 1 · Antuka";
   const parsed = parseProposalTime(time);
-  if (parsed && playerHasTimeCollision(currentPersonaId(), parsed.day, parsed.date, parsed.start, parsed.end)) {
+  const proposalIsoDate = parsed?.isoDate || (parsed ? nextIsoDateForDay(parsed.day) : selectedBookingIsoDate());
+  if (parsed && playerHasTimeCollision(currentPersonaId(), parsed.day, proposalIsoDate, parsed.start, parsed.end)) {
     lastActionMessage = "V tomto case uz mas rezervaci. Vyber jiny termin.";
+    return false;
+  }
+  if (parsed && courtHasTimeCollision(courtFromLabel(court), proposalIsoDate, parsed.start, parsed.end)) {
+    lastActionMessage = "Vybrany kurt je v tomto case obsazeny. Vyber jiny cas nebo kurt.";
     return false;
   }
   const duplicate = gameProposals.find((proposal) => proposal.ownerId === currentPersonaId() && proposal.title === time && proposal.court === court);
   const already = duplicate ? new Set(duplicate.sentTo.map((player) => player.playerId)) : new Set();
   const invitees = rawInvitees.filter((id) =>
     !already.has(id) &&
-    (!parsed || !playerHasTimeCollision(id, parsed.day, parsed.date, parsed.start, parsed.end))
+    (!parsed || !playerHasTimeCollision(id, parsed.day, proposalIsoDate, parsed.start, parsed.end))
   );
   if (!invitees.length) {
     const blockedNames = rawInvitees
@@ -2323,7 +2380,7 @@ function createGameInvitation() {
     id: `proposal-${Date.now()}`,
     ownerId: currentPersonaId(),
     gameType,
-    isoDate: parsed ? nextIsoDateForDay(parsed.day) : selectedBookingIsoDate(),
+    isoDate: proposalIsoDate,
     title: time,
     court,
     sentTo: [],
@@ -2756,18 +2813,21 @@ function saveSpecialOccupancy() {
 }
 
 function saveAdminEvent() {
+  if (state.role !== "admin") return false;
   const title = document.querySelector("#eventTitleInput")?.value?.trim() || "Nova klubova akce";
-  const meta = document.querySelector("#eventMetaInput")?.value?.trim() || "Termin bude upresnen";
+  const eventDate = dateFromDateInput(document.querySelector("#eventDateInput")?.value || dateInputValue(appToday));
+  const start = document.querySelector("#eventStartInput")?.value?.trim() || "10:00";
+  const end = document.querySelector("#eventEndInput")?.value?.trim() || "14:00";
+  const meta = `${formatPortalDate(eventDate)} ${start}-${end}`;
   const fee = document.querySelector("#eventFeeInput")?.value?.trim() || "Zdarma";
   const detail = document.querySelector("#eventDetailInput")?.value?.trim() || "Detail akce doplni spravce.";
   const visual = document.querySelector("#eventVisualInput")?.value || "rackets";
-  const dayToken = meta.split(/\s+/)[0] || "Dnes";
   events.unshift({
     id: `${visual}-${Date.now()}`,
-    isoDate: nextIsoDateForDay(dayToken),
+    isoDate: dateToIso(eventDate),
     thumbnail: visual,
     status: "published",
-    date: meta.split(" ")[0] || "Akce",
+    date: weekdayCodes[eventDate.getDay()] || "Akce",
     title,
     meta,
     detail,
@@ -3011,10 +3071,10 @@ function attendanceFromPlayerId(playerId, status = "confirmed", role = "potvrdil
 }
 
 function proposalToReservation(proposal) {
-  const [dayName, timeRange] = proposal.title.split(" ");
-  const [start = "17:00", end = "18:30"] = (timeRange || "17:00-18:30").split("-");
-  const courtName = proposal.court.split("·")[0].trim();
-  const court = courts.find((item) => item.name === courtName) || courts[0];
+  const parsed = parseProposalTime(proposal.title);
+  const start = parsed?.start || "17:00";
+  const end = parsed?.end || "18:30";
+  const court = courtFromLabel(proposal.court);
   const invited = proposal.sentTo.map((player) => {
     const normalized = normalizeAttendancePlayer(player);
     return {
@@ -3029,7 +3089,7 @@ function proposalToReservation(proposal) {
   if (proposal.ownerId && !invited.some((player) => player.playerId === proposal.ownerId)) {
     invited.unshift(attendanceFromPlayerId(proposal.ownerId, "active", "zalozil hru"));
   }
-  const isoDate = proposal.isoDate || nextIsoDateForDay(dayName);
+  const isoDate = proposal.isoDate || parsed?.isoDate || nextIsoDateForDay(parsed?.day || "Dnes");
   const date = dateFromIso(isoDate) || selectedBookingDateObject();
   return {
     id: `reservation-${Date.now()}-${proposal.ownerId || "player"}`,
@@ -4035,7 +4095,7 @@ function renderEvents() {
             <h2>Akce klubu</h2>
             <p class="muted">Detail, prihlaseni, pozvani pratel a historie turnaju.</p>
           </div>
-          <button class="small-button" data-action="event-admin">Pridat</button>
+          ${state.role === "admin" ? `<button class="small-button" data-action="event-admin">Pridat</button>` : ""}
         </div>
         ${eventList(publicEvents())}
       </section>
@@ -5498,6 +5558,7 @@ function invitePlayerModal(data) {
   const player = players.find((item) => item.id === data.player);
   const event = events.find((item) => item.id === data.event);
   const eventMode = Boolean(event);
+  const gameTimeOptions = availableGameTimeOptions();
   return `
     <div class="modal-body">
       <div>
@@ -5508,7 +5569,7 @@ function invitePlayerModal(data) {
       <div class="form-grid">
         ${eventMode ? `<input type="hidden" id="inviteEventInput" value="${event.id}">` : `
           <div class="field"><label>Typ hry</label><select id="inviteGameType"><option value="single">Single - 2 hraci</option><option value="double" selected>Double - 4 hraci</option></select></div>
-          <div class="field"><label>Navrhovany termin</label><select id="inviteTimeInput"><option>Patek 17:00-18:30</option><option>Patek 18:30-20:00</option><option>Sobota 9:30-11:00</option></select></div>
+          <div class="field"><label>Navrhovany termin</label><select id="inviteTimeInput">${gameTimeOptions.map((option) => `<option>${option}</option>`).join("")}</select></div>
           <div class="field"><label>Kurt</label><select id="inviteCourtInput"><option>Kurt 1 · Antuka</option><option>Kurt 2 · Umele</option><option>Kurt 3 · Trava</option></select></div>
         `}
         <div class="field invite-friends-field"><label>Koho pozvat</label><div class="choice-list">${friendOptions(player?.id || "", { eventId: event?.id || "" })}</div></div>
@@ -5963,7 +6024,20 @@ function busyModal() {
 }
 
 function eventAdminModal() {
+  if (state.role !== "admin") {
+    return `
+      <div class="modal-body">
+        <div>
+          <p class="eyebrow">Jen spravce</p>
+          <h2 id="modalTitle">Klubove akce vytvari spravce</h2>
+          <p class="muted">Hrac muze akci zobrazit, prihlasit se nebo pozvat kamarady.</p>
+        </div>
+        <button class="primary-button" data-confirm="close">Zavrit</button>
+      </div>
+    `;
+  }
   const options = eventThumbnails.map((thumb) => `<option value="${thumb.id}">${thumb.label}</option>`).join("");
+  const defaultDate = new Date(appToday.getFullYear(), appToday.getMonth(), appToday.getDate() + 7);
   return `
     <div class="modal-body">
       <div>
@@ -5972,7 +6046,9 @@ function eventAdminModal() {
       </div>
       <div class="form-grid">
         <div class="field"><label>Nazev akce</label><input id="eventTitleInput" value="Testovani raket"></div>
-        <div class="field"><label>Termin</label><input id="eventMetaInput" value="Sobota 10:00"></div>
+        <div class="field"><label>Datum</label><input id="eventDateInput" type="date" value="${dateInputValue(defaultDate)}"></div>
+        <div class="field"><label>Od</label><input id="eventStartInput" type="time" value="10:00"></div>
+        <div class="field"><label>Do</label><input id="eventEndInput" type="time" value="14:00"></div>
         <div class="field"><label>Startovne</label><input id="eventFeeInput" value="Zdarma"></div>
         <div class="field"><label>Obrazek akce</label><select id="eventVisualInput">${options}</select></div>
         <div class="field"><label>Detail</label><textarea id="eventDetailInput">Prezentace, testovani a objednavky produktu navazane na obsazenost kurtu.</textarea></div>
@@ -6613,8 +6689,10 @@ function tournamentAdminModal(data) {
         </div>
         <div class="form-grid">
           <div class="field"><label>Nazev</label><input id="tournamentTitleInput" value="Klubovy single turnaj"></div>
-          <div class="field"><label>Start</label><input id="tournamentDateInput" value="${formatPortalDate(tournamentDate)} 9:00"></div>
-          <div class="field"><label>Uzaverka</label><input id="tournamentDeadlineInput" value="${formatPortalDate(deadlineDate)} 20:00"></div>
+          <div class="field"><label>Datum startu</label><input id="tournamentDateInput" type="date" value="${dateInputValue(tournamentDate)}"></div>
+          <div class="field"><label>Cas startu</label><input id="tournamentStartTimeInput" type="time" value="09:00"></div>
+          <div class="field"><label>Datum uzaverky</label><input id="tournamentDeadlineInput" type="date" value="${dateInputValue(deadlineDate)}"></div>
+          <div class="field"><label>Cas uzaverky</label><input id="tournamentDeadlineTimeInput" type="time" value="20:00"></div>
           <div class="field"><label>Max hracu</label><input id="tournamentMaxInput" value="16"></div>
         </div>
         <button class="primary-button" data-confirm="tournament-create">Vytvorit turnaj</button>
