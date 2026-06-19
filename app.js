@@ -1505,12 +1505,60 @@ async function enablePortalNotifications() {
       permission = Notification.permission;
     }
     state.notificationsEnabled = permission === "granted" || permission === "unsupported";
+    if (permission === "granted") await registerPushSubscription();
     persistData();
     updateAppBadge();
-    showToast(permission === "granted" ? "Notifikace a odznak jsou povolene." : "Odznak je pripraveny, pro push bude potreba povoleni telefonu.");
+    showToast(permission === "granted" ? "Notifikace jsou aktivni i pri zavrene aplikaci." : "Odznak je pripraveny, pro push bude potreba povoleni telefonu.");
   } catch (error) {
     showToast("Telefon nepovolil notifikace, portal ale funguje dal.");
   }
+}
+
+function urlBase64ToUint8Array(value) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+}
+
+async function registerPushSubscription() {
+  if (!API_BASE || state.role !== "player" || !("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+  const registration = await navigator.serviceWorker.ready;
+  const keyResponse = await fetch(apiUrl("/api/push/vapid-public-key"), { cache: "no-store" });
+  const keyPayload = await keyResponse.json();
+  if (!keyResponse.ok || !keyPayload.publicKey) throw new Error("Push key unavailable");
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(keyPayload.publicKey)
+    });
+  }
+  const response = await fetch(apiUrl("/api/push/subscribe"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ playerId: currentPersonaId(), subscription: subscription.toJSON() })
+  });
+  if (!response.ok) throw new Error("Push subscription failed");
+  return true;
+}
+
+async function refreshPushSubscription() {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    if (state.role === "player") {
+      await registerPushSubscription();
+      return;
+    }
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) {
+      await fetch(apiUrl("/api/push/unsubscribe"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: subscription.endpoint })
+      });
+    }
+  } catch (_) {}
 }
 
 function applyClubBranding() {
@@ -6055,33 +6103,17 @@ function courtDetailModal(data) {
 }
 
 function loginModal() {
-  const pending = JSON.parse(localStorage.getItem("tennis-demo-login") || "null");
-  const email = pending?.email || "radim@siruch.cz";
   return `
     <div class="modal-body">
       <div>
         <p class="eyebrow">Prihlaseni</p>
         <h2 id="modalTitle">E-mail a heslo</h2>
-        <p class="muted">Testovaci provoz: portal vygeneruje heslo jako simulovany e-mail. V ostre verzi ho odesle server.</p>
       </div>
       <div class="form-grid">
-        <div class="field"><label>E-mail</label><input id="loginEmailInput" value="${email}" autocomplete="email"></div>
-        <div class="field"><label>Heslo z e-mailu</label><input id="loginPasswordInput" value="" autocomplete="one-time-code" placeholder="nejdrive poslat heslo"></div>
-      </div>
-      ${pending ? `
-        <div class="login-mail-preview">
-          <strong>Simulovany e-mail pro test</strong>
-          <small>Komu: ${pending.email}</small>
-          <span>Heslo: <b>${pending.password}</b></span>
-        </div>
-      ` : ""}
-      <div class="profile-list">
-        <div class="profile-row"><span>Hrac</span><span>radim@siruch.cz / siruch-radim</span></div>
-        <div class="profile-row"><span>Spravce</span><span>spravce@siruch.cz / siruch-admin</span></div>
-        <div class="profile-row"><span>Vypletac / obchod</span><span>vypletac@siruch.cz / obchod@siruch.cz</span></div>
+        <div class="field"><label>E-mail</label><input id="loginEmailInput" value="" type="email" autocomplete="username"></div>
+        <div class="field"><label>Heslo</label><input id="loginPasswordInput" value="" type="password" autocomplete="current-password"></div>
       </div>
       <div class="inline-actions">
-        <button class="secondary-button" data-confirm="login-send">Poslat heslo</button>
         <button class="primary-button" data-confirm="login-enter">Prihlasit</button>
       </div>
     </div>
@@ -7252,6 +7284,7 @@ document.addEventListener("click", (event) => {
       if (completeDemoLogin()) {
         closeModal();
         render();
+        refreshPushSubscription();
         showToast("Prihlaseni probehlo.");
       }
       return;
@@ -7436,6 +7469,7 @@ async function bootPortal() {
 
   render();
   startRemoteSync();
+  if (hasSession) refreshPushSubscription();
   if (!isLocalTestingMode() && !hasSession && !loginPromptShown) {
     loginPromptShown = true;
     window.setTimeout(() => openModal("login"), 300);

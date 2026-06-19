@@ -1,8 +1,13 @@
 name = "sportbar-siruch-api"
 main = "worker/index.js"
 compatibility_date = "2026-06-18"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = true
+
+[vars]
+VAPID_SUBJECT = "mailto:portal@sportbarsiruch.cz"
+VAPID_PUBLIC_KEY = "BFkFSbssKeGVcq0RsTk-VBPngH9XRloEHaAnwjt2kRNJEgTdCm7VQwN93WTTzofnu6afsOpJhAKHCwtGdwG3ZNg"
 
 [[d1_databases]]
 binding = "DB"
