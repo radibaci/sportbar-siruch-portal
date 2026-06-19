@@ -1,7 +1,7 @@
 const club = {
   name: "Sportbar Siruch",
   logoText: "DM",
-  logoUrl: "assets/club-logo-dm-192.png?v=74",
+  logoUrl: "assets/club-logo-dm-192.png?v=75",
   open: "8:00",
   close: "21:00",
   slotMinutes: 30,
@@ -1481,8 +1481,8 @@ async function sendAndroidNotificationTest() {
     const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
     await registration.showNotification(`${club.name}: ${count} zpravy`, {
       body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
-      icon: "assets/club-logo-dm-192.png?v=74",
-      badge: "assets/club-logo-dm-192.png?v=74",
+      icon: "assets/club-logo-dm-192.png?v=75",
+      badge: "assets/club-logo-dm-192.png?v=75",
       tag: `siruch-test-${Date.now()}`,
       renotify: false,
       data: { url: "./index.html" }
@@ -2948,10 +2948,11 @@ function splitPriceRuleByOverlap(rule, newRule) {
 }
 
 function savePriceRule(courtId) {
+  if (!courts.some((court) => court.id === courtId)) return false;
   const days = document.querySelector("#priceDays")?.value || "Po-Pa";
   const start = document.querySelector("#priceStart")?.value || club.open;
   const end = document.querySelector("#priceEnd")?.value || club.close;
-  const price = Number(document.querySelector("#priceAmount")?.value || 0);
+  const price = Number(String(document.querySelector("#priceAmount")?.value || "0").replace(/[^\d.]/g, ""));
   if (timeToMinutes(end) <= timeToMinutes(start) || !price) return false;
   const newRule = { court: courtId, days, start, end, price };
   courtPriceRules = courtPriceRules
@@ -7165,6 +7166,17 @@ document.addEventListener("click", (event) => {
       }
       return;
     }
+    if (kind === "admin-price-save") {
+      const courtId = confirm.dataset.court;
+      if (!savePriceRule(courtId)) {
+        showToast("Cenovy usek nejde ulozit. Zkontroluj kurt, cas od-do a cenu.");
+        return;
+      }
+      modalContent.innerHTML = adminCourtModal({ court: courtId });
+      render();
+      showToast("Cenovy usek kurtu je ulozeny.");
+      return;
+    }
     if (kind === "book" && !createBookingReservation()) {
       showToast(lastActionMessage || "Rezervaci se nepodarilo vytvorit.");
       return;
@@ -7206,7 +7218,6 @@ document.addEventListener("click", (event) => {
     if (kind === "replacement") acceptReplacementCandidate(Number(confirm.dataset.reservation || 3), confirm.dataset.candidate || "");
     if (kind === "event") saveAdminEvent();
     if (kind === "special-occupancy") saveSpecialOccupancy();
-    if (kind === "admin-price-save") savePriceRule(confirm.dataset.court);
     if (kind === "admin-settings-save") saveAdminSettings();
     if (kind === "admin-court-save") saveCourtSettings(confirm.dataset.court);
     if (kind === "admin-court-delete") removeCourt(confirm.dataset.court);

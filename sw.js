@@ -1,15 +1,15 @@
-const CACHE_NAME = "tennis-club-portal-v78";
+const CACHE_NAME = "tennis-club-portal-v79";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=74",
-  "./app.js?v=74",
-  "./manifest.webmanifest?v=74",
-  "./assets/app-icon-192.png?v=74",
-  "./assets/app-icon-512.png?v=74",
-  "./assets/club-logo-dm.png?v=74",
-  "./assets/club-logo-dm-192.png?v=74",
-  "./assets/club-logo-dm-512.png?v=74",
+  "./styles.css?v=75",
+  "./app.js?v=75",
+  "./manifest.webmanifest?v=75",
+  "./assets/app-icon-192.png?v=75",
+  "./assets/app-icon-512.png?v=75",
+  "./assets/club-logo-dm.png?v=75",
+  "./assets/club-logo-dm-192.png?v=75",
+  "./assets/club-logo-dm-512.png?v=75",
   "./assets/court-top-view.png",
   "./assets/club-shop-hero.png",
   "./assets/event-doubles.png",
@@ -64,8 +64,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(Promise.all([
     self.registration.showNotification(data.title || "Sportbar Siruch", {
       body: data.body || "Nova zprava v klubovem portalu.",
-      icon: "assets/club-logo-dm-192.png?v=74",
-      badge: "assets/club-logo-dm-192.png?v=74",
+      icon: "assets/club-logo-dm-192.png?v=75",
+      badge: "assets/club-logo-dm-192.png?v=75",
       data: { url: data.url || "./index.html" }
     }),
     self.navigator?.setAppBadge ? self.navigator.setAppBadge(badgeCount) : Promise.resolve()
