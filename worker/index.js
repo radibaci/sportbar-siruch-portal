@@ -1,6 +1,7 @@
 import { buildPushPayload } from "@block65/webcrypto-web-push";
 
 const STATE_KEY = "portal-state";
+const APP_START_URL = "./index.html?api=https%3A%2F%2Fsportbar-siruch-api.bacik.workers.dev&v=81";
 
 function corsHeaders() {
   return {
@@ -75,7 +76,7 @@ function notificationPayload(notification, state) {
     body: notification.meta || notification.status || "Nova zprava v klubovem portalu.",
     badge: Math.max(1, unread),
     notificationId: notification.id,
-    url: "./index.html"
+    url: APP_START_URL
   });
 }
 

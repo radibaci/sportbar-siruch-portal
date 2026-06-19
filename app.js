@@ -660,7 +660,15 @@ const modalClose = document.querySelector("#modalClose");
 const toast = document.querySelector("#toast");
 const STORAGE_KEY = "tennis-club-portal-state-v1";
 const DEMO_VERSION = 54;
-const API_BASE = new URLSearchParams(window.location.search).get("api") || "";
+const DEFAULT_PUBLIC_API = "https://sportbar-siruch-api.bacik.workers.dev";
+const API_STORAGE_KEY = "tennis-club-api-base";
+const urlApiBase = new URLSearchParams(window.location.search).get("api") || "";
+let storedApiBase = "";
+try {
+  storedApiBase = localStorage.getItem(API_STORAGE_KEY) || "";
+  if (urlApiBase) localStorage.setItem(API_STORAGE_KEY, urlApiBase);
+} catch (_) {}
+const API_BASE = urlApiBase || storedApiBase || (window.location.hostname === "radibaci.github.io" ? DEFAULT_PUBLIC_API : "");
 const LOGIN_SESSION_KEY = "tennis-club-login-session";
 let sharedApiOnline = false;
 let suppressRemotePersist = false;
@@ -1727,10 +1735,13 @@ async function enablePortalNotifications() {
       permission = Notification.permission;
     }
     state.notificationsEnabled = permission === "granted" || permission === "unsupported";
-    if (permission === "granted") await registerPushSubscription();
+    let pushReady = false;
+    if (permission === "granted") pushReady = await registerPushSubscription();
     persistData();
     updateAppBadge();
-    showToast(permission === "granted" ? "Notifikace jsou aktivni i pri zavrene aplikaci." : "Odznak je pripraveny, pro push bude potreba povoleni telefonu.");
+    showToast(permission === "granted"
+      ? (pushReady ? "Notifikace jsou aktivni i pri zavrene aplikaci." : "Telefon povolil notifikace, ale portal neni pripojeny k API.")
+      : "Odznak je pripraveny, pro push bude potreba povoleni telefonu.");
   } catch (error) {
     showToast("Telefon nepovolil notifikace, portal ale funguje dal.");
   }

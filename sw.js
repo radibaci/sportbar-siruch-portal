@@ -1,10 +1,11 @@
-const CACHE_NAME = "tennis-club-portal-v84";
+const CACHE_NAME = "tennis-club-portal-v85";
+const APP_START_URL = "./index.html?api=https%3A%2F%2Fsportbar-siruch-api.bacik.workers.dev&v=81";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=80",
-  "./app.js?v=80",
-  "./manifest.webmanifest?v=80",
+  "./styles.css?v=81",
+  "./app.js?v=81",
+  "./manifest.webmanifest?v=81",
   "./assets/app-icon-192.png?v=76",
   "./assets/app-icon-512.png?v=76",
   "./assets/club-logo-dm.png?v=76",
@@ -68,7 +69,7 @@ self.addEventListener("push", (event) => {
       badge: "assets/club-logo-dm-192.png?v=78",
       tag: data.notificationId || undefined,
       renotify: true,
-      data: { url: data.url || "./index.html", notificationId: data.notificationId }
+      data: { url: data.url || APP_START_URL, notificationId: data.notificationId }
     }),
     self.navigator?.setAppBadge ? self.navigator.setAppBadge(badgeCount) : Promise.resolve()
   ]));
@@ -76,6 +77,6 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || "./index.html";
+  const targetUrl = event.notification.data?.url || APP_START_URL;
   event.waitUntil(clients.openWindow(targetUrl));
 });
