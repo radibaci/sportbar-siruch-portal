@@ -118,7 +118,7 @@ const players = [
     id: "robin",
     name: "Robin",
     initials: "RO",
-    relation: "friend",
+    relation: "club",
     gender: "male",
     accountType: "club",
     accountLabel: "Klubovy hrac",
@@ -149,7 +149,7 @@ const players = [
     id: "bob",
     name: "Bob",
     initials: "BO",
-    relation: "friend",
+    relation: "club",
     gender: "male",
     accountType: "club",
     accountLabel: "Klubovy hrac",
@@ -180,7 +180,7 @@ const players = [
     id: "honza",
     name: "Honza",
     initials: "HO",
-    relation: "friend",
+    relation: "club",
     gender: "male",
     accountType: "club",
     accountLabel: "Klubovy hrac",
@@ -304,7 +304,7 @@ const players = [
     id: "radim",
     name: "Radim",
     initials: "RA",
-    relation: "friend",
+    relation: "club",
     gender: "male",
     accountType: "club",
     accountLabel: "Klubovy hrac",
@@ -366,7 +366,7 @@ const players = [
     id: "handa",
     name: "Handa",
     initials: "HA",
-    relation: "friend",
+    relation: "club",
     gender: "female",
     accountType: "club",
     accountLabel: "Klubovy hrac",
@@ -428,7 +428,7 @@ const players = [
     id: "viki",
     name: "Viki",
     initials: "VI",
-    relation: "friend",
+    relation: "club",
     gender: "female",
     accountType: "club",
     accountLabel: "Klubovy hrac",
@@ -491,6 +491,8 @@ function eventThumbnail(id = "rackets") {
 const payments = [];
 
 const notifications = [];
+const friendships = [];
+const friendRequests = [];
 
 const gameProposals = [];
 
@@ -841,6 +843,8 @@ function portalStatePayload() {
     players,
     guestProfiles,
     notifications,
+    friendships,
+    friendRequests,
     gameProposals,
     personalReservations,
     joinedEvents: [...state.joinedEvents],
@@ -902,7 +906,8 @@ function mergeConcurrentState(remoteState, localState, baseState) {
   const merged = cloneData(remoteState);
   const entityCollections = [
     "events", "adminReservations", "playerOrders", "stringingOrders", "clubPolls",
-    "tournaments", "players", "guestProfiles", "notifications", "gameProposals", "personalReservations"
+    "tournaments", "players", "guestProfiles", "notifications", "friendships", "friendRequests",
+    "gameProposals", "personalReservations"
   ];
   merged.courts = mergeCourts(baseState.courts || [], localState.courts || [], remoteState.courts || []);
   entityCollections.forEach((key) => {
@@ -973,15 +978,15 @@ function applyStoredState(saved) {
   replaceArray(clubPolls, saved.clubPolls);
   replaceArray(tournaments, saved.tournaments);
   replaceArray(notifications, saved.notifications);
+  replaceArray(friendships, saved.friendships);
+  replaceArray(friendRequests, saved.friendRequests);
   replaceArray(gameProposals, saved.gameProposals);
   replaceArray(personalReservations, saved.personalReservations);
   if (Array.isArray(saved.joinedEvents)) state.joinedEvents = new Set(saved.joinedEvents);
   if (saved.joinedEventsByPlayer) state.joinedEventsByPlayer = saved.joinedEventsByPlayer;
   if (Array.isArray(saved.players)) {
-    saved.players.forEach((savedPlayer) => {
-      const player = adminPlayerDirectory.find((item) => item.id === savedPlayer.id);
-      if (player) Object.assign(player, savedPlayer);
-    });
+    replaceArray(players, saved.players);
+    replaceArray(adminPlayerDirectory, saved.players);
   }
   if (Array.isArray(saved.guestProfiles)) {
     saved.guestProfiles.forEach((savedGuest) => {
@@ -1338,7 +1343,13 @@ function reservationGameLabel(reservation) {
 
 function suggestedReplacementId(reservation, declinedPlayerId) {
   const used = new Set(normalizedAttendance(reservation).map((player) => player.playerId));
-  const preferred = ["filip", "marek", "darek", "zbyna", "prema", "handa", "viki", "robin", "bob", "honza", "radim"];
+  const activeFriendIds = normalizedAttendance(reservation)
+    .filter(activeForGame)
+    .flatMap((player) => friendsForPlayer(player.playerId).map((friend) => friend.id));
+  const preferred = [
+    ...activeFriendIds,
+    "filip", "marek", "darek", "zbyna", "prema", "handa", "viki", "robin", "bob", "honza", "radim"
+  ];
   return preferred.find((id) => id !== declinedPlayerId && !used.has(id)) || "filip";
 }
 
@@ -1484,6 +1495,101 @@ function currentPersonaId() {
   return state.role === "player" ? state.persona : "radim";
 }
 
+function friendshipKey(playerA = "", playerB = "") {
+  return [playerA, playerB].filter(Boolean).sort().join("__");
+}
+
+function areFriends(playerA = currentPersonaId(), playerB = "") {
+  if (!playerA || !playerB || playerA === playerB) return false;
+  const key = friendshipKey(playerA, playerB);
+  return friendships.some((item) => item.id === key || friendshipKey(...(item.players || [])) === key);
+}
+
+function friendRequestBetween(playerA = currentPersonaId(), playerB = "") {
+  const key = friendshipKey(playerA, playerB);
+  return friendRequests.find((item) => item.status === "pending" && friendshipKey(item.from, item.to) === key);
+}
+
+function friendsForPlayer(playerId = currentPersonaId()) {
+  return adminPlayerDirectory.filter((player) => areFriends(playerId, player.id));
+}
+
+function relationshipState(playerId = "") {
+  if (!playerId || playerId === currentPersonaId()) return "self";
+  if (areFriends(currentPersonaId(), playerId)) return "friend";
+  const request = friendRequestBetween(currentPersonaId(), playerId);
+  if (!request) return "none";
+  return request.from === currentPersonaId() ? "sent" : "received";
+}
+
+function createFriendRequest(playerId = "") {
+  const from = currentPersonaId();
+  const to = playerId;
+  if (!to || from === to || areFriends(from, to)) return false;
+  const existing = friendRequestBetween(from, to);
+  if (existing) {
+    lastActionMessage = existing.from === from ? "Zadost o kamaradstvi uz ceka na potvrzeni." : "Hrac uz ti poslal zadost, muzes ji potvrdit v oznameni.";
+    return false;
+  }
+  const sender = playerRecordById(from);
+  friendRequests.push({
+    id: `friend-request-${Date.now()}-${from}-${to}`,
+    from,
+    to,
+    status: "pending",
+    createdAt: new Date().toISOString()
+  });
+  notifications.push({
+    id: `friend-request-${Date.now()}-${to}`,
+    type: "friend-request",
+    recipients: [to],
+    title: "Zadost o kamaradstvi",
+    meta: `${sender?.name || "Hrac"} chce byt tvuj kamarad v klubovem portalu.`,
+    status: "Ceka na potvrzeni",
+    requestFrom: from
+  });
+  persistData();
+  return true;
+}
+
+function acceptFriendRequest(notificationId = "") {
+  const playerId = currentPersonaId();
+  const notice = notifications.find((item) => item.id === notificationId) ||
+    notifications.find((item) => item.type === "friend-request" && item.recipients?.includes(playerId));
+  const request = notice
+    ? friendRequests.find((item) => item.status === "pending" && item.from === notice.requestFrom && item.to === playerId)
+    : friendRequests.find((item) => item.status === "pending" && item.to === playerId);
+  if (!request) return false;
+  const key = friendshipKey(request.from, request.to);
+  if (!friendships.some((item) => item.id === key)) {
+    friendships.push({ id: key, players: [request.from, request.to], createdAt: new Date().toISOString() });
+  }
+  request.status = "accepted";
+  notifications.splice(0, notifications.length, ...notifications.filter((item) => item.id !== notice?.id));
+  notifications.push({
+    id: `friend-accepted-${Date.now()}-${request.from}`,
+    type: "friend-accepted",
+    recipients: [request.from],
+    title: "Kamaradstvi potvrzeno",
+    meta: `${playerRecordById(playerId)?.name || "Hrac"} potvrdil kamaradstvi. Muzete se rychleji zvat na hry.`,
+    status: "Hotovo"
+  });
+  persistData();
+  return true;
+}
+
+function declineFriendRequest(notificationId = "") {
+  const playerId = currentPersonaId();
+  const notice = notifications.find((item) => item.id === notificationId);
+  const request = notice
+    ? friendRequests.find((item) => item.status === "pending" && item.from === notice.requestFrom && item.to === playerId)
+    : null;
+  if (request) request.status = "declined";
+  notifications.splice(0, notifications.length, ...notifications.filter((item) => item.id !== notificationId));
+  persistData();
+  return true;
+}
+
 function reservationHasPlayer(reservation, playerId = currentPersonaId()) {
   return normalizedAttendance(reservation).some((player) => player.playerId === playerId && player.status !== "declined");
 }
@@ -1563,7 +1669,9 @@ function visibleNotifications() {
   if (state.role !== "player") return [];
   const playerId = currentPersonaId();
   const explicit = notifications.filter((item) =>
-    Array.isArray(item.recipients)
+    item.eventId && events.find((event) => event.id === item.eventId)?.status === "cancelled" && item.type !== "event-cancelled"
+      ? false
+      : Array.isArray(item.recipients)
       ? item.recipients.includes(playerId)
       : item.reservationIndex !== undefined
         ? reservationHasPlayer(personalReservations[item.reservationIndex], playerId)
@@ -1730,7 +1838,18 @@ async function sendAndroidNotificationTest() {
 }
 
 function accountByEmail(email = "") {
-  return demoLoginAccounts.find((account) => account.email.toLowerCase() === email.trim().toLowerCase());
+  const normalized = email.trim().toLowerCase();
+  return demoLoginAccounts.find((account) => account.email.toLowerCase() === normalized) ||
+    adminPlayerDirectory
+      .map((player) => player.email ? ({
+        email: player.email,
+        password: player.password || `siruch-${player.id}`,
+        role: "player",
+        persona: player.id,
+        label: player.name
+      }) : null)
+      .filter(Boolean)
+      .find((account) => account.email.toLowerCase() === normalized);
 }
 
 function requestDemoLoginPassword() {
@@ -1790,7 +1909,7 @@ function visibleGameProposals() {
 
 function visibleJoinedEvents() {
   const ids = state.joinedEventsByPlayer[currentPersonaId()] || [];
-  return ids.map((id) => events.find((event) => event.id === id)).filter(Boolean);
+  return ids.map((id) => events.find((event) => event.id === id)).filter((event) => event && event.status !== "cancelled");
 }
 
 function eventHasRegisteredPlayer(event, player) {
@@ -1809,6 +1928,40 @@ function registerPlayerForEvent(event, player) {
   }
   event.registered.push(fullName);
   return true;
+}
+
+function eventRecipientIds(event) {
+  const ids = new Set();
+  (event.registered || []).forEach((name) => {
+    const player = playerIdByDisplayName(name);
+    if (player) ids.add(player);
+  });
+  notifications.forEach((item) => {
+    if (item.eventId === event.id) (item.recipients || []).forEach((id) => ids.add(id));
+  });
+  Object.entries(state.joinedEventsByPlayer || {}).forEach(([playerId, eventIds]) => {
+    if ((eventIds || []).includes(event.id)) ids.add(playerId);
+  });
+  return [...ids].filter((id) => playerRecordById(id));
+}
+
+function notifyPlayersAboutEvent(event, mode = "created", reason = "", recipientsOverride = null) {
+  const recipients = recipientsOverride || (mode === "cancelled" ? eventRecipientIds(event) : players.map((player) => player.id));
+  const type = mode === "cancelled" ? "event-cancelled" : "event-announcement";
+  notifications.splice(0, notifications.length, ...notifications.filter((item) =>
+    !(item.eventId === event.id && item.type === type)
+  ));
+  recipients.forEach((id) => notifications.push({
+    id: `${type}-${event.id}-${Date.now()}-${id}`,
+    type,
+    recipients: [id],
+    title: mode === "cancelled" ? "Akce zrusena" : "Nova klubova akce",
+    meta: mode === "cancelled"
+      ? `${event.title} (${event.meta}) je zrusena. Duvod: ${reason || "spravce doplni duvod"}`
+      : `${event.title} - ${event.meta}. Otevri detail a prihlas se, pokud chces jit.`,
+    status: mode === "cancelled" ? "Omluva od klubu" : "Nova akce",
+    eventId: event.id
+  }));
 }
 
 function pollById(pollId = "") {
@@ -1968,6 +2121,28 @@ function publishApprovedEvent(eventId = "") {
   if (!event || event.status !== "seller_confirmed") return false;
   event.status = "published";
   event.sellerStatus = "publikovano hracum";
+  notifyPlayersAboutEvent(event, "created");
+  persistData();
+  return true;
+}
+
+function cancelAdminEvent(eventId = "") {
+  const event = events.find((item) => item.id === eventId);
+  if (!event) return false;
+  const reason = document.querySelector("#adminEventCancelReasonInput")?.value?.trim() || "Nedostatek ucastniku nebo organizacni duvody.";
+  const cancelRecipients = eventRecipientIds(event);
+  event.status = "cancelled";
+  event.cancelReason = reason;
+  event.cancelledAt = new Date().toISOString();
+  event.registered = [];
+  Object.keys(state.joinedEventsByPlayer || {}).forEach((playerId) => {
+    state.joinedEventsByPlayer[playerId] = (state.joinedEventsByPlayer[playerId] || []).filter((id) => id !== event.id);
+  });
+  state.joinedEvents.delete(event.id);
+  notifications.splice(0, notifications.length, ...notifications.filter((item) =>
+    !(item.eventId === event.id && ["event-invite", "event-announcement"].includes(item.type))
+  ));
+  notifyPlayersAboutEvent(event, "cancelled", reason, cancelRecipients);
   persistData();
   return true;
 }
@@ -2121,6 +2296,9 @@ function joinEventForPlayer(eventId, playerId = currentPersonaId()) {
   if (!state.joinedEventsByPlayer[playerId].includes(eventId)) state.joinedEventsByPlayer[playerId].push(eventId);
   if (playerId === currentPersonaId()) state.joinedEvents.add(eventId);
   registerPlayerForEvent(event, player);
+  notifications.splice(0, notifications.length, ...notifications.filter((item) =>
+    !(item.eventId === eventId && item.recipients?.includes(playerId) && ["event-announcement", "event-invite"].includes(item.type))
+  ));
   return true;
 }
 
@@ -2446,7 +2624,7 @@ function legacySaveAdminOrder(product, player) {
 }
 
 function legacyFriendOptions(preselected = "") {
-  const friends = players.filter((player) => player.relation === "friend" || ["filip", "marek", "darek", "handa", "viki"].includes(player.id));
+  const friends = friendsForPlayer();
   return friends
     .filter((player) => player.id !== currentPersonaId())
     .map((player) => `
@@ -2591,7 +2769,7 @@ function invitedPlayerIdsForContext({ eventId = "", proposalId = "" } = {}) {
 
 function friendOptions(preselected = "", context = {}) {
   const alreadyInvited = invitedPlayerIdsForContext(context);
-  const friends = players.filter((player) => player.relation === "friend" || ["filip", "marek", "darek", "handa", "viki"].includes(player.id));
+  const friends = friendsForPlayer();
   return friends
     .filter((player) => player.id !== currentPersonaId() && (player.id === preselected || !alreadyInvited.has(player.id)))
     .map((player) => `
@@ -2600,7 +2778,7 @@ function friendOptions(preselected = "", context = {}) {
         <span class="avatar tiny-avatar ${player.gender === "female" ? "gender-female" : "gender-male"}">${player.initials}</span>
         <span><b>${player.name}</b><small>${player.level} · ${player.lastPlayed}</small></span>
       </label>
-    `).join("") || `<div class="empty-state">Vsechny vhodne hrace uz mas pozvane.</div>`;
+    `).join("") || `<div class="empty-state">Zatim nemas potvrzene kamarady. Otevri hrace klubu a posli zadost o kamaradstvi.</div>`;
 }
 
 function saveAdminOrder(product, player) {
@@ -3308,7 +3486,7 @@ function saveAdminEvent() {
   const detail = document.querySelector("#eventDetailInput")?.value?.trim() || "Detail akce doplni spravce.";
   const visual = document.querySelector("#eventVisualInput")?.value || "rackets";
   const customImage = document.querySelector("#eventImageUrlInput")?.value?.trim();
-  events.unshift({
+  const event = {
     id: `${visual}-${Date.now()}`,
     isoDate: dateToIso(eventDate),
     thumbnail: customImage || visual,
@@ -3320,7 +3498,9 @@ function saveAdminEvent() {
     fee,
     registered: [],
     history: ""
-  });
+  };
+  events.unshift(event);
+  notifyPlayersAboutEvent(event, "created");
   persistData();
   return true;
 }
@@ -3370,6 +3550,84 @@ function saveAdminPlayer(playerId) {
   const note = document.querySelector("#adminNoteInput")?.value?.trim();
   if (reason) player.discountReason = reason;
   if (note) player.adminNote = note;
+  persistData();
+  return true;
+}
+
+function slugifyPlayerId(value = "hrac") {
+  const base = String(value || "hrac")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "hrac";
+  let id = base;
+  let index = 2;
+  while (playerRecordById(id)) {
+    id = `${base}-${index}`;
+    index += 1;
+  }
+  return id;
+}
+
+function initialsFromName(name = "") {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : (parts[0] || "H").slice(0, 2)).toUpperCase();
+}
+
+function createAdminPlayerFromModal() {
+  if (state.role !== "admin") return false;
+  const name = document.querySelector("#newPlayerNameInput")?.value?.trim();
+  const email = document.querySelector("#newPlayerEmailInput")?.value?.trim().toLowerCase();
+  const password = document.querySelector("#newPlayerPasswordInput")?.value?.trim();
+  if (!name || !email || !password) {
+    lastActionMessage = "Vypln jmeno, e-mail a heslo noveho hrace.";
+    return false;
+  }
+  if (accountByEmail(email)) {
+    lastActionMessage = "Tento e-mail uz v portalu existuje.";
+    return false;
+  }
+  const accountType = document.querySelector("#newPlayerTypeInput")?.value || "club";
+  const gender = document.querySelector("#newPlayerGenderInput")?.value || "male";
+  const credit = Number(document.querySelector("#newPlayerCreditInput")?.value || 0);
+  const baseDiscount = accountType === "guest" ? 0 : Number(document.querySelector("#newPlayerDiscountInput")?.value || 0);
+  const id = slugifyPlayerId(email.split("@")[0] || name);
+  const player = {
+    id,
+    name,
+    initials: initialsFromName(name),
+    relation: "club",
+    gender,
+    email,
+    password,
+    accountType,
+    accountLabel: accountType === "guest" ? "Host" : accountType === "credit" ? "Kreditovy hrac" : "Klubovy hrac",
+    age: null,
+    credit,
+    paidCredit: credit,
+    bonusCredit: 0,
+    discount: baseDiscount,
+    baseDiscount,
+    loyaltyDiscount: 0,
+    playedHours: 0,
+    nextLoyaltyHours: 50,
+    discountReason: "Novy hrac zalozen spravcem.",
+    seasonSpend: 0,
+    seasonReservations: 0,
+    adminNote: "Novy profil, doplnit poznamky po prvnich hrach.",
+    invitedBy: "",
+    level: "nezadano",
+    type: "nezadano",
+    time: "",
+    reservationNeed: "",
+    style: "nezadano",
+    tournaments: "zadne",
+    lastPlayed: "Zatim bez historie.",
+    record: "0 zapasu"
+  };
+  players.push(player);
+  adminPlayerDirectory.push(player);
   persistData();
   return true;
 }
@@ -4514,8 +4772,8 @@ function largeScheduleSlot(court, time) {
 }
 
 function renderPlayers() {
-  const friends = players.filter((player) => player.relation === "friend");
-  const clubPlayers = players.filter((player) => player.relation !== "friend");
+  const friends = friendsForPlayer();
+  const clubPlayers = players.filter((player) => player.id !== currentPersonaId() && !areFriends(currentPersonaId(), player.id));
   const seekingPlayers = players.filter((player) => {
     const need = (player.reservationNeed || "").toLowerCase();
     return need.includes("hleda") || need.includes("chybi");
@@ -4542,7 +4800,7 @@ function renderPlayers() {
           <h2>Moji kamaradi</h2>
           <span class="pill handshake">Podane ruce</span>
         </div>
-        ${playerList(friends, "friend-list")}
+        ${friends.length ? playerList(friends, "friend-list") : `<div class="history-card compact-empty"><strong>Zatim zadni kamaradi</strong><small>Klikni na hrace klubu a posli zadost. Po potvrzeni se objevi tady.</small></div>`}
       </section>
       <section class="section">
         <details class="club-players">
@@ -4560,17 +4818,19 @@ function renderPlayers() {
 function playerList(items, className = "") {
   return `
     <div class="player-list ${className}">
-      ${items.map((player) => `
+      ${items.map((player) => {
+        const friend = areFriends(currentPersonaId(), player.id);
+        return `
         <button class="player-row row-button ${["Handa", "Viki"].some((name) => player.name.includes(name)) ? "player-female" : "player-male"}" data-action="player-detail" data-player="${player.id}">
-          <span class="avatar ${player.relation === "friend" ? "friend-avatar" : ""}" data-player="${player.id}">${avatarContent(player)}${player.relation === "friend" ? "<i>♢</i>" : ""}</span>
+          <span class="avatar ${friend ? "friend-avatar" : ""}" data-player="${player.id}">${avatarContent(player)}${friend ? "<i>🤝</i>" : ""}</span>
           <span>
             <strong>${player.name}</strong>
             <small>${player.level} · ${player.type} · ${player.time}</small>
             <small>${player.reservationNeed}</small>
           </span>
-          <b>Detail</b>
+          <b>${friend ? "Kamarad" : "Detail"}</b>
         </button>
-      `).join("")}
+      `;}).join("")}
     </div>
   `;
 }
@@ -5570,13 +5830,13 @@ function renderAdminPlayersLegacy() {
         <div class="admin-player-grid">
           ${players.map((player) => `
             <button class="admin-player-card" data-action="admin-player" data-player="${player.id}">
-              <span class="avatar ${player.relation === "friend" ? "friend-avatar" : ""}" data-player="${player.id}">${avatarContent(player)}</span>
+              <span class="avatar" data-player="${player.id}">${avatarContent(player)}</span>
               <span>
                 <strong>${player.name}</strong>
                 <small>${player.level} · ${player.type}</small>
                 <small>${player.reservationNeed}</small>
               </span>
-              <b>${player.relation === "friend" ? "znamy" : "klub"}</b>
+              <b>${player.accountType === "guest" ? "host" : "klub"}</b>
             </button>
           `).join("")}
         </div>
@@ -5607,12 +5867,15 @@ function renderAdminPlayers() {
             <h2>Hraci a hoste</h2>
             <p class="muted">Typ hrace, kredit, sleva, poznamky spravce, rezervace a doporuceni do her.</p>
           </div>
-          <span class="pill">${adminPlayerDirectory.length} profily</span>
+          <div class="inline-actions compact-actions">
+            <span class="pill">${adminPlayerDirectory.length} profily</span>
+            <button class="small-button" data-action="admin-player-new">Novy hrac</button>
+          </div>
         </div>
         <div class="admin-player-grid">
           ${adminPlayerDirectory.map((player) => `
             <button class="admin-player-card ${playerTone(player)}" data-action="admin-player" data-player="${player.id}">
-              <span class="avatar ${player.relation === "friend" ? "friend-avatar" : ""}" data-player="${player.id}">${avatarContent(player)}</span>
+              <span class="avatar" data-player="${player.id}">${avatarContent(player)}</span>
               <span>
                 <strong>${player.name}</strong>
                 <small>${player.accountLabel} · ${player.age ? `${player.age} let · ` : ""}${player.level}</small>
@@ -5681,7 +5944,7 @@ function renderAdminEvents() {
           <button class="small-button" data-action="event-admin">Pridat</button>
         </div>
         <div class="admin-event-list">
-          ${events.map((event) => `
+          ${events.filter((event) => event.status !== "cancelled").map((event) => `
             <button class="admin-event-card" data-action="admin-event" data-event="${event.id}">
               <span class="event-thumb"><img src="${eventThumbnail(event.thumbnail || (event.id.includes("doubles") ? "doubles" : event.id.includes("shoes") ? "shoes" : "rackets")).image}" alt="${eventThumbnail(event.thumbnail || (event.id.includes("doubles") ? "doubles" : event.id.includes("shoes") ? "shoes" : "rackets")).label}"></span>
               <span>
@@ -5900,6 +6163,7 @@ function openModal(kind, data = {}) {
     "admin-court": adminCourtModal,
     "admin-reservation": adminReservationModal,
     "admin-player": adminPlayerModal,
+    "admin-player-new": adminPlayerNewModal,
     "admin-event": adminEventModal,
     "tournament-admin": tournamentAdminModal,
     "seller-event": sellerEventModal,
@@ -6005,6 +6269,14 @@ function findPlayerModal() {
 
 function playerDetailModal(data) {
   const player = players.find((item) => item.id === data.player) || players[0];
+  const relation = relationshipState(player.id);
+  const relationText = {
+    self: "To jsi ty",
+    friend: "Potvrzeny kamarad",
+    sent: "Zadost ceka na potvrzeni",
+    received: "Hrac ceka na tvoje potvrzeni",
+    none: "Zatim nejste kamaradi"
+  }[relation];
   return `
     <div class="modal-body">
       <div class="profile-hero">
@@ -6016,13 +6288,16 @@ function playerDetailModal(data) {
         </div>
       </div>
       <div class="profile-list">
+        <div class="profile-row"><span>Vztah</span><span>${relationText}</span></div>
         <div class="profile-row"><span>Kdy jde hrat</span><span>${player.reservationNeed}</span></div>
         <div class="profile-row"><span>Turnaje</span><span>${player.tournaments}</span></div>
         <div class="profile-row"><span>Spolu jste hrali</span><span>${player.lastPlayed}</span></div>
         <div class="profile-row"><span>Klubova bilance</span><span>${player.record}</span></div>
       </div>
       <div class="inline-actions">
-        <button class="secondary-button" data-action="invite" data-player="${player.id}">Pozvat na hru</button>
+        ${relation === "friend" ? `<button class="secondary-button" data-action="invite" data-player="${player.id}">Pozvat na hru</button>` : ""}
+        ${relation === "none" ? `<button class="secondary-button" data-confirm="friend-request" data-player="${player.id}">Pozadat o kamaradstvi</button>` : ""}
+        ${relation === "received" ? `<button class="secondary-button" data-confirm="decline-friend" data-notification="${notifications.find((item) => item.type === "friend-request" && item.requestFrom === player.id && item.recipients?.includes(currentPersonaId()))?.id || ""}">Odmitnout</button><button class="primary-button" data-confirm="accept-friend" data-notification="${notifications.find((item) => item.type === "friend-request" && item.requestFrom === player.id && item.recipients?.includes(currentPersonaId()))?.id || ""}">Potvrdit kamaradstvi</button>` : ""}
         <button class="primary-button" data-confirm="contact">Zprava</button>
       </div>
     </div>
@@ -6473,6 +6748,55 @@ function notificationDetailModal(data = {}) {
       </div>
     `;
   }
+  if (item?.type === "friend-request") {
+    const sender = playerRecordById(item.requestFrom);
+    return `
+      <div class="modal-body">
+        <div class="profile-hero">
+          <span class="avatar profile-avatar" data-player="${sender?.id || ""}">${avatarContent(sender)}</span>
+          <div>
+            <p class="eyebrow">Kamaradstvi</p>
+            <h2 id="modalTitle">${sender?.name || "Hrac"} chce byt kamarad</h2>
+            <p class="muted">Po potvrzeni se budete navzajem videt v sekci Moji kamaradi a portal vas muze prednostne nabidnout do singlu, deblu nebo jako nahradnika.</p>
+          </div>
+        </div>
+        <div class="inline-actions">
+          <button class="secondary-button" data-confirm="decline-friend" data-notification="${item.id}">Odmitnout</button>
+          <button class="primary-button" data-confirm="accept-friend" data-notification="${item.id}">Potvrdit kamaradstvi</button>
+        </div>
+      </div>
+    `;
+  }
+  if (item?.type === "friend-accepted") {
+    return `
+      <div class="modal-body">
+        <div>
+          <p class="eyebrow">Kamaradstvi potvrzeno</p>
+          <h2 id="modalTitle">${item.title}</h2>
+          <p class="muted">${item.meta}</p>
+        </div>
+        <button class="primary-button" data-confirm="dismiss-notification" data-notification="${item.id}">Rozumim</button>
+      </div>
+    `;
+  }
+  if (item?.type === "event-announcement" || item?.type === "event-cancelled") {
+    const event = events.find((entry) => entry.id === item.eventId);
+    const thumb = eventThumbnail(event?.thumbnail || "rackets");
+    return `
+      <div class="modal-body">
+        ${event ? `<img class="modal-court-image event-hero-image" src="${thumb.image}" alt="${thumb.label}">` : ""}
+        <div>
+          <p class="eyebrow">${item.type === "event-cancelled" ? "Zrusena akce" : "Nova akce"}</p>
+          <h2 id="modalTitle">${event?.title || item.title}</h2>
+          <p class="muted">${item.meta}</p>
+        </div>
+        <div class="inline-actions">
+          <button class="secondary-button" data-confirm="dismiss-notification" data-notification="${item.id}">Zavrit zpravu</button>
+          ${item.type === "event-announcement" && event ? `<button class="primary-button" data-confirm="accept-event" data-event="${event.id}" data-notification="${item.id}">Zucastnim se</button>` : ""}
+        </div>
+      </div>
+    `;
+  }
   if (item?.type === "event-invite") {
     const event = events.find((entry) => entry.id === item.eventId) || events[0];
     const thumb = eventThumbnail(event.thumbnail || "rackets");
@@ -6733,6 +7057,7 @@ function adminEventModal(data) {
         </div>
         <div class="field"><label>Prihlaseni</label><textarea id="adminEventRegisteredInput">${event.registered.join("\n")}</textarea></div>
         <div class="field"><label>Vysledky / historie</label><textarea id="adminEventHistoryInput">${event.history || "Doplnit po akci: vysledky, viteze, fotky, YouTube odkazy."}</textarea></div>
+        <div class="field"><label>Duvod zruseni</label><textarea id="adminEventCancelReasonInput">${event.cancelReason || "Mrzi nas to, akci musime zrusit kvuli malemu poctu prihlasenych / organizacnim duvodum."}</textarea></div>
       </div>
       ${event.sourcePollId ? `
         <div class="profile-list">
@@ -6742,6 +7067,7 @@ function adminEventModal(data) {
         </div>
       ` : ""}
       <div class="inline-actions">
+        ${event.status !== "cancelled" ? `<button class="danger-button" data-confirm="admin-event-cancel" data-event="${event.id}">Zrusit akci</button>` : ""}
         ${event.sourcePollId && event.status !== "seller_confirmed" ? `<button class="secondary-button" data-confirm="seller-request" data-event="${event.id}">Poslat obchodnikovi</button>` : ""}
         <button class="primary-button" data-confirm="${event.sourcePollId && event.status !== "seller_confirmed" ? "admin-event-save" : event.status === "seller_confirmed" ? "event-publish" : "admin-event-save"}" data-event="${event.id}">${event.status === "seller_confirmed" ? "Publikovat hracum" : "Ulozit akci"}</button>
       </div>
@@ -6768,6 +7094,39 @@ function sellerEventModal(data) {
         <div class="field"><label>Reakce obchodnika spravci</label><textarea id="sellerNoteInput">${event.sellerNote || "Termin potvrzuji, veci dodame na klub a po akci odvezeme neprodane kusy."}</textarea></div>
       </div>
       <button class="primary-button" data-confirm="seller-confirm-event" data-event="${event.id}">Potvrdit obchodnikem</button>
+    </div>
+  `;
+}
+
+function adminPlayerNewModal() {
+  if (state.role !== "admin") {
+    return `
+      <div class="modal-body">
+        <div>
+          <p class="eyebrow">Jen spravce</p>
+          <h2 id="modalTitle">Nove hrace zaklada spravce</h2>
+        </div>
+        <button class="primary-button" data-confirm="close">Zavrit</button>
+      </div>
+    `;
+  }
+  return `
+    <div class="modal-body player-admin-modal">
+      <div>
+        <p class="eyebrow">Novy ucet</p>
+        <h2 id="modalTitle">Pridat hrace do klubu</h2>
+        <p class="muted">Hrac se pak prihlasi e-mailem a heslem. Kamarady si musi potvrdit sam pres zadost.</p>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Jmeno</label><input id="newPlayerNameInput" value=""></div>
+        <div class="field"><label>E-mail</label><input id="newPlayerEmailInput" type="email" value=""></div>
+        <div class="field"><label>Heslo</label><input id="newPlayerPasswordInput" value="siruch-hrac"></div>
+        <div class="field"><label>Typ hrace</label><select id="newPlayerTypeInput"><option value="club">Klub - rocni prispevek</option><option value="credit">Kreditovy hrac</option><option value="guest">Host</option></select></div>
+        <div class="field"><label>Pohlavi</label><select id="newPlayerGenderInput"><option value="male">Muz</option><option value="female">Zena</option></select></div>
+        <div class="field"><label>Pocatecni kredit</label><input id="newPlayerCreditInput" type="number" min="0" step="100" value="0"></div>
+        <div class="field"><label>Zakladni sleva %</label><input id="newPlayerDiscountInput" type="number" min="0" max="60" value="0"></div>
+      </div>
+      <button class="primary-button" data-confirm="admin-player-create">Vytvorit hrace</button>
     </div>
   `;
 }
@@ -7486,6 +7845,19 @@ document.addEventListener("click", (event) => {
       notifications.splice(0, notifications.length, ...notifications.filter((item) => item.id !== confirm.dataset.notification));
       persistData();
     }
+    if (kind === "dismiss-notification") {
+      notifications.splice(0, notifications.length, ...notifications.filter((item) => item.id !== confirm.dataset.notification));
+      persistData();
+    }
+    if (kind === "friend-request") {
+      if (!createFriendRequest(confirm.dataset.player)) {
+        showToast(lastActionMessage || "Zadost o kamaradstvi se nepodarilo odeslat.");
+        lastActionMessage = "";
+        return;
+      }
+    }
+    if (kind === "accept-friend") acceptFriendRequest(confirm.dataset.notification);
+    if (kind === "decline-friend") declineFriendRequest(confirm.dataset.notification);
     if (kind === "accept-replacement-invite") acceptReplacementInvite(confirm.dataset.notification);
     if (kind === "decline-replacement-invite") declineReplacementInvite(confirm.dataset.notification);
     if (kind === "accept-booking-invite") acceptBookingInvite(confirm.dataset.notification);
@@ -7498,7 +7870,13 @@ document.addEventListener("click", (event) => {
     if (kind === "admin-court-save") saveCourtSettings(confirm.dataset.court);
     if (kind === "admin-court-delete") removeCourt(confirm.dataset.court);
     if (kind === "admin-player-save") saveAdminPlayer(confirm.dataset.player);
+    if (kind === "admin-player-create" && !createAdminPlayerFromModal()) {
+      showToast(lastActionMessage || "Hrace se nepodarilo vytvorit.");
+      lastActionMessage = "";
+      return;
+    }
     if (kind === "admin-event-save") saveAdminEventDetails(confirm.dataset.event);
+    if (kind === "admin-event-cancel") cancelAdminEvent(confirm.dataset.event);
     if (kind === "seller-request") requestSellerApproval(confirm.dataset.event);
     if (kind === "seller-confirm-event") sellerConfirmEvent(confirm.dataset.event);
     if (kind === "event-publish") publishApprovedEvent(confirm.dataset.event);
@@ -7559,7 +7937,9 @@ document.addEventListener("click", (event) => {
       "admin-court-save": "Kurt byl ulozen.",
       "admin-court-delete": "Kurt je odebrany z klubu. Posledni kurt zustava chraneny.",
       "admin-player-save": "Karta hrace byla ulozena.",
+      "admin-player-create": "Novy hrac je zalozeny a muze se prihlasit e-mailem.",
       "admin-event-save": "Akce a jeji obrazek byly ulozeny.",
+      "admin-event-cancel": "Akce je zrusena, prihlasenym hracum prisla omluva.",
       "seller-request": "Navrh akce byl poslan obchodnikovi ke schvaleni.",
       "seller-confirm-event": "Obchodnik potvrdil termin a dodavku.",
       "event-publish": "Akce je publikovana hracum.",
@@ -7585,6 +7965,10 @@ document.addEventListener("click", (event) => {
       "stringing-pickup": "Vypletac prevzal raketu.",
       "stringing-ready": "Vypletac vratil raketu klubu a hrac dostal zpravu k vyzvednuti na recepci.",
       "stringing-delivered": "Klub oznacil raketu jako predanou hraci.",
+      "friend-request": "Zadost o kamaradstvi byla odeslana.",
+      "accept-friend": "Kamaradstvi je potvrzene.",
+      "decline-friend": "Zadost o kamaradstvi je odmitnuta.",
+      "dismiss-notification": "Zprava je zavrena.",
       close: "Zavreno."
     };
     const feedback = lastActionMessage || messages[kind];
