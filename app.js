@@ -1,7 +1,7 @@
 const club = {
   name: "Sportbar Siruch",
   logoText: "DM",
-  logoUrl: "assets/club-logo-dm-192.png?v=75",
+  logoUrl: "assets/club-logo-dm-192.png?v=76",
   open: "8:00",
   close: "21:00",
   slotMinutes: 30,
@@ -1272,6 +1272,33 @@ function startReplacementVote(reservationIndex, declinedPlayerId) {
   return true;
 }
 
+function refreshReservationLineup(reservationIndex = 0) {
+  const reservation = personalReservations[reservationIndex];
+  if (!reservation?.attendance) return false;
+  const attendance = normalizedAttendance(reservation);
+  const active = attendance.filter(activeForGame);
+  const pending = attendance.some((player) => player.status === "pending");
+  const target = reservationTargetPlayers(reservation);
+  reservation.players = active.map((player) => player.name);
+  const linked = courtReservationById(reservation.id);
+  if (linked) {
+    linked.reservation.players = [...reservation.players];
+    linked.reservation.type = pending ? "pending" : active.length >= target ? "mine" : "group";
+    linked.reservation.title = pending
+      ? "Ceka na spoluhrace"
+      : active.length >= target
+        ? (reservation.gameType === "single" ? "Dvouhra potvrzena" : "Ctyrhra potvrzena")
+        : "Hleda spoluhrace";
+  }
+  const admin = adminReservations.find((item) => item.reservationId === reservation.id);
+  if (admin) {
+    admin.status = pending ? "Ceka na potvrzeni" : active.length >= target ? "Plna sestava" : "Ceka na hrace";
+    admin.players = `${active.length}/${target}`;
+    admin.tone = active.length >= target && !pending ? "good" : "warn";
+  }
+  return true;
+}
+
 function declineReservation(reservationIndex = 0) {
   const reservation = personalReservations[reservationIndex];
   if (!reservation?.attendance) return false;
@@ -1292,7 +1319,33 @@ function declineReservation(reservationIndex = 0) {
     notifications.splice(0, notifications.length, ...notifications.filter((item) => item.reservationIndex !== reservationIndex));
   } else {
     startReplacementVote(reservationIndex, playerId);
+    refreshReservationLineup(reservationIndex);
   }
+  persistData();
+  return true;
+}
+
+function undoReservationDecline(reservationIndex = 0) {
+  const reservation = personalReservations[reservationIndex];
+  const playerId = currentPersonaId();
+  if (!canUndoReservationDecline(reservation, playerId) || !reservation?.attendance) {
+    lastActionMessage = "Omluvenku uz nejde vzit zpet, protoze nahradnik byl potvrzen nebo rezervace uz neexistuje.";
+    return false;
+  }
+  const me = reservation.attendance.find((player) => normalizeAttendancePlayer(player).playerId === playerId);
+  if (!me) return false;
+  me.status = "confirmed";
+  me.role = "omluvenka zrusena";
+  reservation.attendance = reservation.attendance.filter((player) => {
+    const normalized = normalizeAttendancePlayer(player);
+    return !["candidate"].includes(normalized.status);
+  });
+  refreshReservationLineup(reservationIndex);
+  notifications.splice(0, notifications.length, ...notifications.filter((item) =>
+    item.reservationIndex !== reservationIndex &&
+    item.reservationId !== reservation.id
+  ));
+  lastActionMessage = "Omluvenka je zrusena, nahradnici a hlasovani k terminu jsou uklizene.";
   persistData();
   return true;
 }
@@ -1323,6 +1376,23 @@ function reservationHasPlayer(reservation, playerId = currentPersonaId()) {
 
 function reservationHasAnyPlayer(reservation, playerId = currentPersonaId()) {
   return normalizedAttendance(reservation).some((player) => player.playerId === playerId);
+}
+
+function reservationDeclinedByPlayer(reservation, playerId = currentPersonaId()) {
+  return normalizedAttendance(reservation).some((player) => player.playerId === playerId && player.status === "declined");
+}
+
+function reservationHasConfirmedReplacement(reservation) {
+  return normalizedAttendance(reservation).some((player) => player.status === "replacement");
+}
+
+function canUndoReservationDecline(reservation, playerId = currentPersonaId()) {
+  return Boolean(
+    reservation &&
+    reservation.status !== "cancelled" &&
+    reservationDeclinedByPlayer(reservation, playerId) &&
+    !reservationHasConfirmedReplacement(reservation)
+  );
 }
 
 function normalizeDayKey(day = "") {
@@ -1369,7 +1439,10 @@ function playerHasTimeCollision(playerId, day, date, start, end, ignoreReservati
 
 function visibleReservations() {
   const playerId = currentPersonaId();
-  return personalReservations.filter((reservation) => reservation.status !== "cancelled" && reservationHasPlayer(reservation, playerId));
+  return personalReservations.filter((reservation) =>
+    reservation.status !== "cancelled" &&
+    (reservationHasPlayer(reservation, playerId) || canUndoReservationDecline(reservation, playerId))
+  );
 }
 
 function visibleNotifications() {
@@ -1481,8 +1554,8 @@ async function sendAndroidNotificationTest() {
     const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
     await registration.showNotification(`${club.name}: ${count} zpravy`, {
       body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
-      icon: "assets/club-logo-dm-192.png?v=75",
-      badge: "assets/club-logo-dm-192.png?v=75",
+      icon: "assets/club-logo-dm-192.png?v=76",
+      badge: "assets/club-logo-dm-192.png?v=76",
       tag: `siruch-test-${Date.now()}`,
       renotify: false,
       data: { url: "./index.html" }
@@ -3300,6 +3373,7 @@ function declineAttendanceFromNotification(notificationId = "attendance-main") {
     notifications.splice(0, notifications.length, ...notifications.filter((item) => item.reservationIndex !== reservationIndex));
   } else {
     startReplacementVote(reservationIndex, playerId);
+    refreshReservationLineup(reservationIndex);
   }
   persistData();
   return true;
@@ -4124,10 +4198,11 @@ function reservationCard(reservation) {
   const gamePlayers = attendance.filter((player) => player.status !== "declined");
   const activeCount = attendance.filter(activeForGame).length;
   const hasDeclined = attendance.some((player) => player.status === "declined");
+  const myDeclineCanBeUndone = canUndoReservationDecline(reservation);
   const hasPending = gamePlayers.some((player) => player.status === "pending");
   const reservationState = activeCount >= targetPlayers && !hasPending ? "ready" : activeCount < targetPlayers || hasDeclined ? "danger" : "warning";
-  const reservationLabel = reservationState === "ready" ? `Plna sestava ${targetPlayers}/${targetPlayers}` : reservationState === "danger" ? `Chybi ${Math.max(0, targetPlayers - activeCount)} hrac` : `Ceka potvrzeni ${activeCount}/${targetPlayers}`;
-  const missingText = hasDeclined ? "System nejdriv zkousi zname z historie, potom vhodne hrace podle urovne." : "";
+  const reservationLabel = myDeclineCanBeUndone ? "Jsi omluveny - lze vzit zpet" : reservationState === "ready" ? `Plna sestava ${targetPlayers}/${targetPlayers}` : reservationState === "danger" ? `Chybi ${Math.max(0, targetPlayers - activeCount)} hrac` : `Ceka potvrzeni ${activeCount}/${targetPlayers}`;
+  const missingText = myDeclineCanBeUndone ? "Dokud neni potvrzeny nahradnik, muzes omluvenku zrusit. Tim se uklidi i nahradnici a hlasovani." : hasDeclined ? "System nejdriv zkousi zname z historie, potom vhodne hrace podle urovne." : "";
   const orders = reservationOrders(reservation);
   return `
     <article class="reservation-card ${index === 0 ? "reservation-next" : "reservation-compact"} reservation-${reservationState} ${reservation.court.surfaceClass}" data-action="reservation-detail" data-reservation="${index}">
@@ -4156,7 +4231,7 @@ function reservationCard(reservation) {
       ${orders.length ? `<div class="reservation-block reservation-orders"><small>Nachystat k rezervaci</small>${orders.map((order) => `<span>${order.product} · ${order.status}</span>`).join("")}</div>` : ""}
       <div class="reservation-actions">
         <button class="secondary-button" data-action="reservation-detail" data-reservation="${index}">Detail</button>
-        <button class="primary-button" data-action="cancel" data-reservation="${index}">Omluvit se</button>
+        <button class="${myDeclineCanBeUndone ? "secondary-button" : "primary-button"}" data-action="cancel" data-reservation="${index}">${myDeclineCanBeUndone ? "Vzít omluvenku zpět" : "Omluvit se"}</button>
       </div>
     </article>
   `;
@@ -5708,17 +5783,32 @@ function bookingModal(data) {
 
 function cancelModal(data = {}) {
   const reservation = personalReservations[Number(data.reservation || 0)] || personalReservations[0];
+  const reservationIndex = Number(data.reservation || 0);
+  const canUndo = canUndoReservationDecline(reservation);
+  const hasReplacement = reservationHasConfirmedReplacement(reservation);
+  if (canUndo) {
+    return `
+      <div class="modal-body">
+        <div>
+          <p class="eyebrow">Omluvenka</p>
+          <h2 id="modalTitle">Vzít omluvenku zpět?</h2>
+          <p class="muted">${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}, ${reservation.court.name}. Protoze jeste neni potvrzeny nahradnik, vratis se do sestavy a system zrusi hledani nahradnika i hlasovani.</p>
+        </div>
+        <button class="primary-button" data-confirm="undo-cancel" data-reservation="${reservationIndex}">Vzít omluvenku zpět</button>
+      </div>
+    `;
+  }
   return `
     <div class="modal-body">
       <div>
         <p class="eyebrow">Trvala rezervace</p>
         <h2 id="modalTitle">Omluvit se z terminu?</h2>
-        <p class="muted">${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}, ${reservation.court.name}. Ostatnim se hned spusti hledani a hlasovani o nahradnikovi.</p>
+        <p class="muted">${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}, ${reservation.court.name}. ${hasReplacement ? "Nahradnik uz je potvrzeny, proto uz omluvenku nelze vzit zpet bez domluvy se spravcem/skupinou." : "Ostatnim se hned spusti hledani a hlasovani o nahradnikovi."}</p>
       </div>
       <div class="form-grid">
         <div class="field"><label>Duvod</label><select><option>Jsem nemocny</option><option>Nemame hrace do ctyrhry</option><option>Pracovni duvody</option><option>Jine</option></select></div>
       </div>
-      <button class="danger-button" data-confirm="cancel" data-reservation="${Number(data.reservation || 0)}">Omluvit se a spustit nahradnika</button>
+      <button class="danger-button" data-confirm="cancel" data-reservation="${reservationIndex}">Omluvit se a spustit nahradnika</button>
     </div>
   `;
 }
@@ -7182,6 +7272,10 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (kind === "cancel") declineReservation(Number(confirm.dataset.reservation || 0));
+    if (kind === "undo-cancel" && !undoReservationDecline(Number(confirm.dataset.reservation || 0))) {
+      showToast(lastActionMessage || "Omluvenku uz nejde vzit zpet.");
+      return;
+    }
     if (kind === "find-player") createPlayerSearch();
     if (kind === "join" && confirm.dataset.event) {
       joinEventForPlayer(confirm.dataset.event);
@@ -7251,6 +7345,7 @@ document.addEventListener("click", (event) => {
     const messages = {
       book: "Rezervace byla ulozena a propsana ostatnim hracum.",
       cancel: "Ucast byla zrusena. Ostatnim hracum se spustilo hledani nahradnika.",
+      "undo-cancel": "Omluvenka je zrusena a nahradnici k terminu jsou uklizeni.",
       "find-player": "Poptavka na spoluhrace je zverejnena.",
       contact: "Zprava hraci je pripravena k odeslani.",
       login: "Overovaci kod by prisel na telefon nebo e-mail.",
