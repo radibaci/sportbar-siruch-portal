@@ -1,7 +1,7 @@
 const club = {
   name: "Sportbar Siruch",
   logoText: "DM",
-  logoUrl: "assets/club-logo-dm-192.png?v=72",
+  logoUrl: "assets/club-logo-dm-192.png?v=73",
   open: "8:00",
   close: "21:00",
   slotMinutes: 30,
@@ -843,6 +843,7 @@ function migrateDateFields() {
       return !linked || linked.status !== "cancelled";
     });
   });
+  syncReservationCourtReferences();
   notifications.splice(0, notifications.length, ...notifications.filter((item) => {
     if (item.reservationIndex === undefined) return true;
     return personalReservations[item.reservationIndex]?.status !== "cancelled";
@@ -946,7 +947,7 @@ async function hydrateStoredData() {
       if (payload.updatedAt) remoteUpdatedAt = payload.updatedAt;
       if (payload.state) lastRemoteState = cloneData(payload.state);
       if (payload.state && applyStoredState(payload.state)) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.state));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(portalStatePayload()));
         return "api";
       }
     }
@@ -980,7 +981,7 @@ async function syncRemoteState({ silent = true } = {}) {
     remoteUpdatedAt = payload.updatedAt;
     lastRemoteState = cloneData(payload.state);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.state));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(portalStatePayload()));
     } catch (_) {}
     render();
     if (!silent && visibleNotifications().length) showToast("Dorazila nova zprava v portalu.");
@@ -1003,8 +1004,13 @@ function startRemoteSync() {
 }
 
 function timeToMinutes(time) {
-  const [hour, minute] = time.split(":").map(Number);
-  return hour * 60 + minute;
+  const match = String(time || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return Number.NaN;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function isValidTime(time) {
+  return Number.isFinite(timeToMinutes(time));
 }
 
 function minutesToTime(minutes) {
@@ -1092,6 +1098,45 @@ function reservationIsoDate(reservation = {}) {
     return dateToIso(new Date(year, month, numericDay, 12));
   }
   return selectedBookingIsoDate();
+}
+
+function courtSnapshot(court = courts[0]) {
+  return {
+    id: court.id,
+    name: court.name,
+    surface: court.surface,
+    surfaceClass: court.surfaceClass,
+    color: court.color,
+    photo: court.photo
+  };
+}
+
+function syncReservationCourtReferences() {
+  personalReservations.forEach((reservation) => {
+    if (!reservation?.id) return;
+    const linked = courtReservationById(reservation.id);
+    const court = linked?.court || courts.find((item) =>
+      item.id === reservation.court?.id ||
+      item.name === reservation.court?.name
+    );
+    if (!court) return;
+    reservation.court = courtSnapshot(court);
+    if (linked?.reservation) {
+      const slot = linked.reservation;
+      if (!slot.isoDate) slot.isoDate = reservationIsoDate(reservation);
+      if (!isValidTime(slot.start) && isValidTime(reservation.start)) slot.start = reservation.start;
+      if (!isValidTime(slot.end) && isValidTime(reservation.end)) slot.end = reservation.end;
+      slot.players = normalizedAttendance(reservation).map((player) => player.name);
+    }
+  });
+  adminReservations.forEach((item) => {
+    const reservation = item.reservationId ? reservationById(item.reservationId) : null;
+    if (!reservation) return;
+    item.time = `${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}`;
+    item.court = reservation.court?.name || item.court;
+    item.surface = reservation.court?.surface || item.surface;
+    item.players = `${normalizedAttendance(reservation).filter(activeForGame).length}/${reservationTargetPlayers(reservation)}`;
+  });
 }
 
 function fullDayName(shortDay) {
@@ -1436,8 +1481,8 @@ async function sendAndroidNotificationTest() {
     const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
     await registration.showNotification(`${club.name}: ${count} zpravy`, {
       body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
-      icon: "assets/club-logo-dm-192.png?v=72",
-      badge: "assets/club-logo-dm-192.png?v=72",
+      icon: "assets/club-logo-dm-192.png?v=73",
+      badge: "assets/club-logo-dm-192.png?v=73",
       tag: `siruch-test-${Date.now()}`,
       renotify: false,
       data: { url: "./index.html" }
@@ -2740,6 +2785,7 @@ function saveCourtSettings(courtId) {
     club.close = close;
   }
   court.surfaceClass = courtSurfaceClass(surface);
+  syncReservationCourtReferences();
   persistData();
   return true;
 }
@@ -2766,6 +2812,7 @@ function createCourtSettings() {
     club.open = open;
     club.close = close;
   }
+  syncReservationCourtReferences();
   persistData();
   return true;
 }
@@ -2775,6 +2822,7 @@ function removeCourt(courtId) {
   if (index < 0 || courts.length <= 1) return false;
   courts.splice(index, 1);
   courtPriceRules = courtPriceRules.filter((rule) => rule.court !== courtId);
+  syncReservationCourtReferences();
   persistData();
   return true;
 }
