@@ -3187,6 +3187,12 @@ h3 {
 .nav-icon.icon-orders { background-position: 50% 100%; }
 .nav-icon.icon-profile { background-position: 100% 100%; }
 
+.nav-icon.icon-profile {
+  background-size: 285% 190%;
+  transform: scale(.9);
+  transform-origin: center;
+}
+
 .nav-badge {
   position: absolute;
   top: -6px;
@@ -3440,6 +3446,84 @@ h3 {
 .title-with-icon .ui-icon::before,
 .title-with-icon .ui-icon::after {
   display: none !important;
+}
+
+@media (max-width: 420px) {
+  .bottom-nav {
+    width: calc(100% - 8px);
+    padding-inline: 4px;
+  }
+
+  .nav-item {
+    min-width: 0;
+    font-size: 10px;
+  }
+
+  .nav-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .booking-court-card {
+    gap: 12px;
+    padding: 8px;
+  }
+
+  .booking-court-head {
+    grid-template-columns: 58px minmax(0, 1fr) auto;
+    gap: 7px;
+  }
+
+  .booking-court-head img {
+    width: 58px;
+    height: 46px;
+  }
+
+  .booking-court-head strong {
+    font-size: 16px;
+  }
+
+  .booking-court-head small,
+  .booking-court-head b {
+    font-size: 11px;
+  }
+
+  .hour-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .hour-label {
+    display: none;
+  }
+
+  .hour-slots {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  .large-slot {
+    min-height: 44px;
+    padding: 6px 3px;
+  }
+
+  .large-slot strong {
+    font-size: 11px;
+  }
+
+  .large-slot small {
+    font-size: 10px;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+
+  .large-slot .slot-search {
+    right: 3px;
+    top: 3px;
+    width: 15px;
+    height: 15px;
+    font-size: 10px;
+  }
 }
 
 @media (min-width: 720px) {
