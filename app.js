@@ -1,7 +1,7 @@
 const club = {
   name: "Sportbar Siruch",
   logoText: "DM",
-  logoUrl: "assets/club-logo-dm-192.png?v=73",
+  logoUrl: "assets/club-logo-dm-192.png?v=74",
   open: "8:00",
   close: "21:00",
   slotMinutes: 30,
@@ -1481,8 +1481,8 @@ async function sendAndroidNotificationTest() {
     const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
     await registration.showNotification(`${club.name}: ${count} zpravy`, {
       body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
-      icon: "assets/club-logo-dm-192.png?v=73",
-      badge: "assets/club-logo-dm-192.png?v=73",
+      icon: "assets/club-logo-dm-192.png?v=74",
+      badge: "assets/club-logo-dm-192.png?v=74",
       tag: `siruch-test-${Date.now()}`,
       renotify: false,
       data: { url: "./index.html" }
@@ -2648,6 +2648,204 @@ function formatMoney(value, currency = club.currency) {
 
 function priceRulesForCourt(court) {
   return courtPriceRules.filter((rule) => rule.court === court.id);
+}
+
+function reservationHours(reservation = {}) {
+  const start = timeToMinutes(reservation.start);
+  const end = timeToMinutes(reservation.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return (end - start) / 60;
+}
+
+function priceForCourtAt(court, time = club.open) {
+  const minute = timeToMinutes(time);
+  const rules = priceRulesForCourt(court);
+  const rule = rules.find((item) =>
+    Number.isFinite(minute) &&
+    timeToMinutes(item.start) <= minute &&
+    timeToMinutes(item.end) > minute
+  ) || rules[0];
+  return Number(rule?.price || 180);
+}
+
+function reservationRevenueEstimate(reservation = {}) {
+  const court = courts.find((item) => item.id === reservation.court?.id || item.name === reservation.court?.name) || reservation.court || courts[0];
+  return Math.round(priceForCourtAt(court, reservation.start) * reservationHours(reservation));
+}
+
+function reservationsForIsoDate(isoDate) {
+  return personalReservations.filter((reservation) =>
+    reservation.status !== "cancelled" &&
+    reservationIsoDate(reservation) === isoDate
+  );
+}
+
+function slotsForCourtAndIso(court, isoDate) {
+  return (court.reservations || []).filter((slot) => {
+    if (slot.reservationId && reservationById(slot.reservationId)?.status === "cancelled") return false;
+    return slot.isoDate === isoDate;
+  });
+}
+
+function occupiedMinutesForSlots(slotsList = []) {
+  return slotsList.reduce((sum, slot) => {
+    const start = timeToMinutes(slot.start);
+    const end = timeToMinutes(slot.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return sum;
+    return sum + (end - start);
+  }, 0);
+}
+
+function freeWindowLabel(court, isoDate = dateToIso(appToday)) {
+  const open = timeToMinutes(club.open);
+  const close = timeToMinutes(club.close);
+  if (!Number.isFinite(open) || !Number.isFinite(close) || close <= open) return "nezadano";
+  const occupied = slotsForCourtAndIso(court, isoDate)
+    .map((slot) => ({ start: timeToMinutes(slot.start), end: timeToMinutes(slot.end) }))
+    .filter((slot) => Number.isFinite(slot.start) && Number.isFinite(slot.end) && slot.end > slot.start)
+    .sort((a, b) => a.start - b.start);
+  let cursor = open;
+  const windows = [];
+  occupied.forEach((slot) => {
+    if (slot.start > cursor) windows.push([cursor, slot.start]);
+    cursor = Math.max(cursor, slot.end);
+  });
+  if (cursor < close) windows.push([cursor, close]);
+  const useful = windows.filter(([start, end]) => end - start >= club.slotMinutes);
+  if (!useful.length) return "bez volna";
+  const [start, end] = useful.reduce((best, item) => (item[1] - item[0] > best[1] - best[0] ? item : best), useful[0]);
+  return `${minutesToTime(start)}-${minutesToTime(end)}`;
+}
+
+function liveCourtUtilization(isoDate = dateToIso(appToday)) {
+  const open = timeToMinutes(club.open);
+  const close = timeToMinutes(club.close);
+  const total = Math.max(1, close - open);
+  return courts.map((court) => {
+    const slotsList = slotsForCourtAndIso(court, isoDate);
+    const occupied = occupiedMinutesForSlots(slotsList);
+    const utilization = Math.min(100, Math.round((occupied / total) * 100));
+    const revenue = slotsList.reduce((sum, slot) => {
+      const reservation = slot.reservationId ? reservationById(slot.reservationId) : null;
+      const hours = (timeToMinutes(slot.end) - timeToMinutes(slot.start)) / 60;
+      return sum + Math.round(priceForCourtAt(court, slot.start) * Math.max(0, hours));
+    }, 0);
+    return {
+      court: court.name,
+      surface: court.surface,
+      utilization,
+      free: freeWindowLabel(court, isoDate),
+      revenue,
+      tone: utilization >= 75 ? "good" : utilization >= 45 ? "warn" : "low"
+    };
+  });
+}
+
+function incompleteReservationCount(reservations = personalReservations) {
+  return reservations.filter((reservation) => {
+    const attendance = normalizedAttendance(reservation);
+    const activeCount = attendance.filter(activeForGame).length;
+    const hasPending = attendance.some((player) => player.status === "pending");
+    return reservation.status !== "cancelled" && (activeCount < reservationTargetPlayers(reservation) || hasPending);
+  }).length;
+}
+
+function liveAdminStats() {
+  const todayIso = dateToIso(appToday);
+  const todayReservations = reservationsForIsoDate(todayIso);
+  const utilization = liveCourtUtilization(todayIso);
+  const averageUtilization = utilization.length
+    ? Math.round(utilization.reduce((sum, item) => sum + item.utilization, 0) / utilization.length)
+    : 0;
+  const pendingOrders = playerOrders.filter((order) => !["vyrizeno", "predano", "hotovo"].includes(String(order.status || "").toLowerCase())).length;
+  return [
+    { value: `${averageUtilization} %`, label: "Vytizeni dnes", tone: averageUtilization >= 70 ? "good" : averageUtilization >= 40 ? "warn" : "low" },
+    { value: String(todayReservations.length), label: "Rezervace dnes", tone: "neutral" },
+    { value: String(incompleteReservationCount(todayReservations)), label: "Dnes cekaji na hrace", tone: incompleteReservationCount(todayReservations) ? "warn" : "good" },
+    { value: String(pendingOrders), label: "Objednavky k vyrizeni", tone: pendingOrders ? "warn" : "good" }
+  ];
+}
+
+function liveAdminTasks() {
+  const todayIso = dateToIso(appToday);
+  const todayReservations = reservationsForIsoDate(todayIso);
+  const incompleteToday = incompleteReservationCount(todayReservations);
+  const pendingOrders = playerOrders.filter((order) => !["vyrizeno", "predano", "hotovo"].includes(String(order.status || "").toLowerCase()));
+  const freeCourt = liveCourtUtilization(todayIso).find((item) => item.free !== "bez volna");
+  const tasks = [];
+  if (incompleteToday) {
+    tasks.push({ title: "Doplnit sestavy", meta: `${incompleteToday} dnesni rezervace ceka na hrace nebo potvrzeni`, action: "admin-reservation" });
+  }
+  if (pendingOrders.length) {
+    tasks.push({ title: "Nachystat objednavky", meta: `${pendingOrders.length} objednavky cekaji na sklad / dodavatele / pripravu`, action: "admin-order" });
+  }
+  if (freeCourt) {
+    tasks.push({ title: "Volny kurt pro last minute", meta: `${freeCourt.court}: nejvetsi volno ${freeCourt.free}`, action: "admin-invite" });
+  }
+  if (!tasks.length) {
+    tasks.push({ title: "Dnes je uklizeno", meta: "Rezervace, objednavky i sestavy jsou bez okamziteho problemu", action: "admin-reservation" });
+  }
+  return tasks;
+}
+
+function reservationInMonth(reservation, year, month) {
+  const date = dateFromIso(reservationIsoDate(reservation));
+  return date && date.getFullYear() === year && date.getMonth() === month;
+}
+
+function monthReservations(year, month) {
+  return personalReservations.filter((reservation) =>
+    reservation.status !== "cancelled" &&
+    reservationInMonth(reservation, year, month)
+  );
+}
+
+function liveMonthlyRevenue() {
+  return Array.from({ length: 6 }, (_, index) => {
+    const date = new Date(appToday.getFullYear(), appToday.getMonth() - 5 + index, 1);
+    const reservations = monthReservations(date.getFullYear(), date.getMonth());
+    return {
+      month: new Intl.DateTimeFormat("cs-CZ", { month: "short" }).format(date),
+      value: reservations.reduce((sum, reservation) => sum + reservationRevenueEstimate(reservation), 0)
+    };
+  });
+}
+
+function liveCourtBusinessStats() {
+  const year = appToday.getFullYear();
+  const month = appToday.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const open = timeToMinutes(club.open);
+  const close = timeToMinutes(club.close);
+  const dailyHours = Math.max(0, close - open) / 60;
+  const monthReservationsList = monthReservations(year, month);
+  const totals = new Map(courts.map((court) => [court.id, { current: 0, hours: 0 }]));
+  monthReservationsList.forEach((reservation) => {
+    const court = courts.find((item) => item.id === reservation.court?.id || item.name === reservation.court?.name) || courts[0];
+    const item = totals.get(court.id);
+    if (!item) return;
+    item.current += reservationRevenueEstimate(reservation);
+    item.hours += reservationHours(reservation);
+  });
+  const maxCurrent = Math.max(1, ...[...totals.values()].map((item) => item.current));
+  return courts.map((court) => {
+    const item = totals.get(court.id) || { current: 0, hours: 0 };
+    const max = Math.round(dailyHours * daysInMonth * priceForCourtAt(court, "18:00"));
+    const utilization = max ? Math.round((item.current / max) * 100) : 0;
+    const popularity = item.current === maxCurrent && item.current > 0
+      ? "nejoblibenejsi"
+      : item.current === 0
+        ? "bez rezervaci"
+        : "aktivni";
+    return {
+      court: court.name,
+      max,
+      current: item.current,
+      trend: `${utilization} % potencialu`,
+      popularity,
+      series: [20, 35, 50, 65, Math.max(8, Math.min(100, utilization))]
+    };
+  });
 }
 
 function courtSurfaceClass(surface) {
@@ -4679,6 +4877,9 @@ function clubShopSection() {
 }
 
 function renderAdminOverview() {
+  const stats = liveAdminStats();
+  const tasks = liveAdminTasks();
+  const todayLabel = formatPortalDate(appToday, false);
   return `
     <section class="view admin-view">
       <section class="section admin-hero">
@@ -4686,12 +4887,12 @@ function renderAdminOverview() {
           <div>
             <p class="eyebrow">Spravce klubu</p>
             <h2>${club.name} dnes</h2>
-            <p class="muted">Rychly prehled provozu, rezervaci, plateb a veci, ktere potrebuji zasah.</p>
+            <p class="muted">Zivy prehled z aktualnich rezervaci, kurtu a objednavek pro ${todayLabel}.</p>
           </div>
-          <span class="pill">test role</span>
+          <span class="pill">live data</span>
         </div>
         <div class="admin-metrics">
-          ${adminStats.map((item) => `
+          ${stats.map((item) => `
             <div class="admin-metric ${item.tone}">
               <strong>${item.value}</strong>
               <span>${item.label}</span>
@@ -4706,7 +4907,7 @@ function renderAdminOverview() {
           <button class="link-button" data-view-link="booking">Rezervace</button>
         </div>
         <div class="admin-task-list">
-          ${adminTasks.map((task) => `
+          ${tasks.map((task) => `
             <button class="admin-task row-button" data-action="${task.action}">
               <span>
                 <strong>${task.title}</strong>
@@ -4748,17 +4949,18 @@ function renderAdminOverview() {
 }
 
 function courtUtilizationSection() {
+  const utilization = liveCourtUtilization(dateToIso(appToday));
   return `
     <section class="section">
       <div class="section-head">
         <div>
           <h2>Vytizenost kurtu</h2>
-          <p class="muted">Kde je jeste prostor a kolik dnes kurt prinesl.</p>
+          <p class="muted">Pocitano z aktualnich slotu v rezervacnim kalendari.</p>
         </div>
-        <span class="pill">dnes</span>
+        <span class="pill">${formatPortalDate(appToday, false)}</span>
       </div>
       <div class="utilization-list">
-        ${courtUtilization.map((item) => `
+        ${utilization.map((item) => `
           <article class="utilization-card ${item.tone}">
             <div class="row-top">
               <strong>${item.court} · ${item.surface}</strong>
@@ -4777,18 +4979,22 @@ function courtUtilizationSection() {
 }
 
 function businessStatsSection() {
-  const monthTotal = monthlyRevenue.at(-1).value;
-  const previousTotal = monthlyRevenue.at(-2).value;
-  const maxTotal = courtBusinessStats.reduce((sum, court) => sum + court.max, 0);
-  const currentTotal = courtBusinessStats.reduce((sum, court) => sum + court.current, 0);
+  const revenue = liveMonthlyRevenue();
+  const courtStats = liveCourtBusinessStats();
+  const monthTotal = revenue.at(-1)?.value || 0;
+  const previousTotal = revenue.at(-2)?.value || 0;
+  const maxTotal = courtStats.reduce((sum, court) => sum + court.max, 0);
+  const currentTotal = courtStats.reduce((sum, court) => sum + court.current, 0);
+  const potential = maxTotal ? Math.round((currentTotal / maxTotal) * 100) : 0;
+  const barMax = Math.max(1, ...revenue.map((item) => item.value));
   return `
     <section class="section business-section">
       <div class="section-head">
         <div>
           <h2>Vykonnost kurtu</h2>
-          <p class="muted">Podnikatelsky pohled: potencial, realny vykon, trend a popularita kurtu.</p>
+          <p class="muted">Pocitano z rezervaci v aktualnim sdilenem stavu.</p>
         </div>
-        <span class="pill">${Math.round((currentTotal / maxTotal) * 100)} % potencialu</span>
+        <span class="pill">${potential} % potencialu</span>
       </div>
       <div class="business-total-grid">
         <div class="business-total"><strong>${formatMoney(monthTotal)}</strong><span>tento mesic</span></div>
@@ -4796,10 +5002,10 @@ function businessStatsSection() {
         <div class="business-total"><strong>${formatMoney(maxTotal)}</strong><span>max. mozny vynos</span></div>
       </div>
       <div class="month-bars">
-        ${monthlyRevenue.map((item) => `<span style="height:${Math.round((item.value / 230000) * 100)}%"><b>${item.month.slice(0, 3)}</b></span>`).join("")}
+        ${revenue.map((item) => `<span style="height:${Math.max(8, Math.round((item.value / barMax) * 100))}%"><b>${item.month.slice(0, 3)}</b></span>`).join("")}
       </div>
       <div class="court-business-list">
-        ${courtBusinessStats.map((court) => `
+        ${courtStats.map((court) => `
           <article class="court-business-card ${court.popularity === "nejmene oblibeny" ? "low" : court.popularity === "nejoblibenejsi" ? "top" : ""}">
             <div class="row-top">
               <strong>${court.court}</strong>
