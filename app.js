@@ -484,6 +484,7 @@ const eventThumbnails = [
 const tournaments = [];
 
 function eventThumbnail(id = "rackets") {
+  if (/^https?:\/\//i.test(id)) return { id: "custom", label: "Vlastni obrazek", image: id };
   return eventThumbnails.find((item) => item.id === id) || eventThumbnails[0];
 }
 
@@ -722,6 +723,107 @@ function replaceArray(target, source) {
 
 function apiUrl(path) {
   return `${API_BASE}${path}`;
+}
+
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Image could not be opened"));
+    };
+    image.src = url;
+  });
+}
+
+async function optimizeImage(file, kind = "photo") {
+  if (!file?.type?.startsWith("image/")) throw new Error("Only images are allowed");
+  const image = await loadImageFile(file);
+  const square = ["profile", "club-logo"].includes(kind);
+  const maxWidth = square ? 720 : 1600;
+  const maxHeight = square ? 720 : 1200;
+  const scale = Math.min(1, maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext("2d").drawImage(image, 0, 0, width, height);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Image conversion failed")), "image/webp", 0.82);
+  });
+}
+
+async function uploadImageFile(file, kind, targetId) {
+  if (!API_BASE) throw new Error("Shared API is not configured");
+  const image = await optimizeImage(file, kind);
+  const safeTarget = String(targetId || "new").replace(/[^a-zA-Z0-9_-]/g, "-");
+  const unique = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const key = `${kind}/${safeTarget}/${unique}.webp`;
+  const response = await fetch(apiUrl(`/api/images/${encodeURIComponent(key)}`), {
+    method: "PUT",
+    headers: { "Content-Type": "image/webp" },
+    body: image
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result?.url) throw new Error(result?.error || "Image upload failed");
+  return result.url;
+}
+
+function setUploadPreview(input, url) {
+  const previewId = input.dataset.preview;
+  const preview = previewId ? document.querySelector(`#${previewId}`) : null;
+  if (preview) preview.src = url;
+  const urlInputId = input.dataset.urlInput;
+  const urlInput = urlInputId ? document.querySelector(`#${urlInputId}`) : null;
+  if (urlInput) urlInput.value = url;
+}
+
+async function handleImageUpload(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  input.disabled = true;
+  showToast("Nahravam a upravuji obrazek...");
+  try {
+    const kind = input.dataset.imageKind || "photo";
+    const targetId = input.dataset.targetId || currentPersonaId();
+    const url = await uploadImageFile(file, kind, targetId);
+    setUploadPreview(input, url);
+
+    if (kind === "profile") {
+      const player = playerRecordById(targetId);
+      if (player) player.photo = url;
+      if (targetId === currentPersonaId()) currentUser.photo = url;
+    } else if (kind === "reservation") {
+      const reservation = personalReservations.find((item) => item.id === targetId);
+      if (reservation) {
+        reservation.photos = Array.isArray(reservation.photos) ? reservation.photos : [];
+        reservation.photos.push(url);
+      }
+    } else if (kind === "court" && targetId !== "new") {
+      const court = courts.find((item) => item.id === targetId);
+      if (court) court.photo = url;
+    } else if (kind === "event" && targetId !== "new") {
+      const event = events.find((item) => item.id === targetId);
+      if (event) event.thumbnail = url;
+    } else if (kind === "club-logo") {
+      club.logoUrl = url;
+      applyClubBranding();
+    }
+
+    persistData();
+    render();
+    showToast("Obrazek je nahrany a ulozeny.");
+  } catch (error) {
+    showToast("Obrazek se nepodarilo nahrat. Zkontroluj pripojeni a format souboru.");
+  } finally {
+    input.disabled = false;
+  }
 }
 
 function portalStatePayload() {
@@ -1364,6 +1466,18 @@ function setCurrentPersona(personaId) {
   currentUser.loyaltyDiscount = record.loyaltyDiscount || 0;
   currentUser.playedHours = record.playedHours || 0;
   currentUser.nextLoyaltyHours = record.nextLoyaltyHours || 25;
+  currentUser.photo = record.photo || "";
+}
+
+function avatarContent(player, fallback = "") {
+  return player?.photo ? `<img src="${player.photo}" alt="${player.name || "Hrac"}">` : (fallback || player?.initials || "");
+}
+
+function applyAvatarPhotos(root = document) {
+  root.querySelectorAll(".avatar[data-player]").forEach((avatar) => {
+    const player = playerRecordById(avatar.dataset.player);
+    if (player?.photo) avatar.innerHTML = avatarContent(player);
+  });
 }
 
 function currentPersonaId() {
@@ -3097,9 +3211,11 @@ function saveCourtSettings(courtId) {
   const color = document.querySelector("#courtColorInput")?.value?.trim() || courtSurfaceColor(surface);
   const open = document.querySelector("#clubOpenInput")?.value?.trim();
   const close = document.querySelector("#clubCloseInput")?.value?.trim();
+  const photo = document.querySelector("#courtPhotoUrlInput")?.value?.trim();
   if (name) court.name = name;
   court.surface = surface;
   if (color) court.color = color;
+  if (photo) court.photo = photo;
   if (open && close && timeToMinutes(close) > timeToMinutes(open)) {
     club.open = open;
     club.close = close;
@@ -3116,6 +3232,7 @@ function createCourtSettings() {
   const color = document.querySelector("#courtColorInput")?.value?.trim() || courtSurfaceColor(surface);
   const open = document.querySelector("#clubOpenInput")?.value?.trim();
   const close = document.querySelector("#clubCloseInput")?.value?.trim();
+  const photo = document.querySelector("#courtPhotoUrlInput")?.value?.trim() || courtPhoto;
   const id = nextCourtId();
   courts.push({
     id,
@@ -3123,7 +3240,7 @@ function createCourtSettings() {
     surface,
     surfaceClass: courtSurfaceClass(surface),
     color,
-    photo: courtPhoto,
+    photo,
     reservations: []
   });
   const defaultPrice = Number(String(document.querySelector("#courtBasePriceInput")?.value || "180").replace(/\D/g, "")) || 180;
@@ -3190,10 +3307,11 @@ function saveAdminEvent() {
   const fee = document.querySelector("#eventFeeInput")?.value?.trim() || "Zdarma";
   const detail = document.querySelector("#eventDetailInput")?.value?.trim() || "Detail akce doplni spravce.";
   const visual = document.querySelector("#eventVisualInput")?.value || "rackets";
+  const customImage = document.querySelector("#eventImageUrlInput")?.value?.trim();
   events.unshift({
     id: `${visual}-${Date.now()}`,
     isoDate: dateToIso(eventDate),
-    thumbnail: visual,
+    thumbnail: customImage || visual,
     status: "published",
     date: weekdayCodes[eventDate.getDay()] || "Akce",
     title,
@@ -3214,12 +3332,13 @@ function saveAdminEventDetails(eventId) {
   const meta = document.querySelector("#adminEventMetaInput")?.value?.trim();
   const fee = document.querySelector("#adminEventFeeInput")?.value?.trim();
   const thumbnail = document.querySelector("#adminEventThumbInput")?.value;
+  const customImage = document.querySelector("#adminEventImageUrlInput")?.value?.trim();
   const registered = document.querySelector("#adminEventRegisteredInput")?.value;
   const history = document.querySelector("#adminEventHistoryInput")?.value?.trim();
   if (title) event.title = title;
   if (meta) event.meta = meta;
   if (fee) event.fee = fee;
-  if (thumbnail) event.thumbnail = thumbnail;
+  if (customImage || thumbnail) event.thumbnail = customImage || thumbnail;
   if (typeof registered === "string") {
     event.registered = registered.split("\n").map((item) => item.trim()).filter(Boolean);
   }
@@ -3649,6 +3768,7 @@ function render() {
 
   content.innerHTML = views[view]();
   renderNavigation();
+  applyAvatarPhotos(content);
   updateRoleSwitcherVisibility();
   updateAppBadge();
 }
@@ -3698,7 +3818,7 @@ function legacyRenderNavigationA() {
   const headerName = document.querySelector(".topbar .muted");
   if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? "Spravce klubu" : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
   const loginInitials = document.querySelector("#loginButton span");
-  if (loginInitials) loginInitials.textContent = state.role === "guest" ? "H" : state.role === "admin" ? "S" : state.role === "stringer" ? "V" : state.role === "seller" ? "O" : currentUser.initials;
+  if (loginInitials) loginInitials.innerHTML = state.role === "guest" ? "H" : state.role === "admin" ? "S" : state.role === "stringer" ? "V" : state.role === "seller" ? "O" : avatarContent(currentUser);
   const clubHoursLabel = document.querySelector("#clubHoursLabel");
   if (clubHoursLabel) clubHoursLabel.textContent = `${club.open}-${club.close}`;
 }
@@ -3749,7 +3869,7 @@ function legacyRenderNavigationB() {
   const headerName = document.querySelector(".topbar .muted");
   if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? "Spravce klubu" : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
   const loginInitials = document.querySelector("#loginButton span");
-  if (loginInitials) loginInitials.textContent = state.role === "guest" ? "H" : state.role === "admin" ? "S" : state.role === "stringer" ? "V" : state.role === "seller" ? "O" : currentUser.initials;
+  if (loginInitials) loginInitials.innerHTML = state.role === "guest" ? "H" : state.role === "admin" ? "S" : state.role === "stringer" ? "V" : state.role === "seller" ? "O" : avatarContent(currentUser);
   const clubHoursLabel = document.querySelector("#clubHoursLabel");
   if (clubHoursLabel) clubHoursLabel.textContent = `${club.open}-${club.close}`;
 }
@@ -4273,8 +4393,8 @@ function reservationCard(reservation) {
       <div class="reservation-block reservation-cheer"><small>Hlaska</small><p class="motivation">${reservationMotivation(reservation, index)}</p></div>
       <div class="reservation-block reservation-photos">
         <small>Fotky a zapis</small>
-        <span>Pred zapasem plan hry, po zapase skore a fotky.</span>
-        <button class="link-button" data-action="photo">Pridat fotku</button>
+        ${reservation.photos?.length ? `<div class="uploaded-photo-strip">${reservation.photos.map((photo) => `<img src="${photo}" alt="Fotka ze zapasu">`).join("")}</div>` : `<span>Pred zapasem plan hry, po zapase skore a fotky.</span>`}
+        <button class="link-button" data-action="photo" data-reservation-id="${reservation.id}">Pridat fotku</button>
       </div>
       ${orders.length ? `<div class="reservation-block reservation-orders"><small>Nachystat k rezervaci</small>${orders.map((order) => `<span>${order.product} · ${order.status}</span>`).join("")}</div>` : ""}
       <div class="reservation-actions">
@@ -4442,7 +4562,7 @@ function playerList(items, className = "") {
     <div class="player-list ${className}">
       ${items.map((player) => `
         <button class="player-row row-button ${["Handa", "Viki"].some((name) => player.name.includes(name)) ? "player-female" : "player-male"}" data-action="player-detail" data-player="${player.id}">
-          <span class="avatar ${player.relation === "friend" ? "friend-avatar" : ""}">${player.initials}${player.relation === "friend" ? "<i>♢</i>" : ""}</span>
+          <span class="avatar ${player.relation === "friend" ? "friend-avatar" : ""}" data-player="${player.id}">${avatarContent(player)}${player.relation === "friend" ? "<i>♢</i>" : ""}</span>
           <span>
             <strong>${player.name}</strong>
             <small>${player.level} · ${player.type} · ${player.time}</small>
@@ -4828,7 +4948,7 @@ function renderProfile() {
   return `
     <section class="view profile-redesign">
       <section class="profile-summary-card">
-        <button class="avatar profile-avatar" data-action="photo">${currentUser.initials}</button>
+        <button class="avatar profile-avatar" data-action="photo" data-player="${currentPersonaId()}">${avatarContent(currentUser)}</button>
         <div>
           <p class="eyebrow">Profil hrace</p>
           <h2>${currentUser.name}</h2>
@@ -4959,7 +5079,7 @@ function renderNavigation() {
   const headerName = document.querySelector(".topbar .muted");
   if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? "Spravce klubu" : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
   const loginInitials = document.querySelector("#loginButton span");
-  if (loginInitials) loginInitials.textContent = state.role === "guest" ? "H" : state.role === "admin" ? "S" : state.role === "stringer" ? "V" : state.role === "seller" ? "O" : currentUser.initials;
+  if (loginInitials) loginInitials.innerHTML = state.role === "guest" ? "H" : state.role === "admin" ? "S" : state.role === "stringer" ? "V" : state.role === "seller" ? "O" : avatarContent(currentUser);
   const clubHoursLabel = document.querySelector("#clubHoursLabel");
   if (clubHoursLabel) clubHoursLabel.textContent = `${club.open}-${club.close}`;
 }
@@ -5450,7 +5570,7 @@ function renderAdminPlayersLegacy() {
         <div class="admin-player-grid">
           ${players.map((player) => `
             <button class="admin-player-card" data-action="admin-player" data-player="${player.id}">
-              <span class="avatar ${player.relation === "friend" ? "friend-avatar" : ""}">${player.initials}</span>
+              <span class="avatar ${player.relation === "friend" ? "friend-avatar" : ""}" data-player="${player.id}">${avatarContent(player)}</span>
               <span>
                 <strong>${player.name}</strong>
                 <small>${player.level} · ${player.type}</small>
@@ -5492,7 +5612,7 @@ function renderAdminPlayers() {
         <div class="admin-player-grid">
           ${adminPlayerDirectory.map((player) => `
             <button class="admin-player-card ${playerTone(player)}" data-action="admin-player" data-player="${player.id}">
-              <span class="avatar ${player.relation === "friend" ? "friend-avatar" : ""}">${player.initials}</span>
+              <span class="avatar ${player.relation === "friend" ? "friend-avatar" : ""}" data-player="${player.id}">${avatarContent(player)}</span>
               <span>
                 <strong>${player.name}</strong>
                 <small>${player.accountLabel} · ${player.age ? `${player.age} let · ` : ""}${player.level}</small>
@@ -5797,6 +5917,7 @@ function openModal(kind, data = {}) {
     "stringing-detail": stringingDetailModal
   };
   modalContent.innerHTML = (modals[kind] || busyModal)(data);
+  applyAvatarPhotos(modalContent);
   modalBackdrop.hidden = false;
 }
 
@@ -5887,7 +6008,7 @@ function playerDetailModal(data) {
   return `
     <div class="modal-body">
       <div class="profile-hero">
-        <span class="avatar profile-avatar">${player.initials}</span>
+        <span class="avatar profile-avatar" data-player="${player.id}">${avatarContent(player)}</span>
         <div>
           <p class="eyebrow">Profil hrace</p>
           <h2 id="modalTitle">${player.name}</h2>
@@ -6036,6 +6157,11 @@ function reservationDetailModal(data) {
           <div class="row-top"><span><b>Objednavky k teto rezervaci</b><small>${orders.map((order) => `${order.product} - ${order.status}`).join(", ")}</small></span></div>
         </div>
       ` : ""}
+      <div class="service-card">
+        <div class="row-top"><span><b>Fotky ze zapasu</b><small>${reservation.photos?.length ? `${reservation.photos.length} nahranych fotek` : "Zatim bez fotek"}</small></span></div>
+        ${reservation.photos?.length ? `<div class="uploaded-photo-grid">${reservation.photos.map((photo) => `<img src="${photo}" alt="Fotka ze zapasu">`).join("")}</div>` : ""}
+        <button class="secondary-button" data-action="photo" data-reservation-id="${reservation.id}">Pridat fotku</button>
+      </div>
       <div class="history-list">
         ${reservationHistory.map((item) => `
           <article class="history-card">
@@ -6138,15 +6264,24 @@ function payModal() {
   `;
 }
 
-function photoModal() {
+function photoModal(data = {}) {
+  const reservation = data.reservationId ? personalReservations.find((item) => item.id === data.reservationId) : null;
+  const kind = reservation ? "reservation" : "profile";
+  const targetId = reservation?.id || currentPersonaId();
+  const title = reservation ? "Fotka k rezervaci" : "Profilova fotka";
+  const currentPhoto = reservation?.photos?.at(-1) || currentUser.photo || "";
   return `
     <div class="modal-body">
       <div>
-        <p class="eyebrow">Profilova fotka</p>
-        <h2 id="modalTitle">Pridat fotku</h2>
-        <p class="muted">V ostre verzi tady bude nahrani souboru a orez fotky. V prototypu drzim misto v profilu.</p>
+        <p class="eyebrow">${title}</p>
+        <h2 id="modalTitle">Vybrat vlastni obrazek</h2>
+        <p class="muted">Vyber fotku z galerie telefonu, fotoaparatu nebo souboru. Portal ji pred nahranim automaticky zmensi.</p>
       </div>
-      <button class="primary-button" data-confirm="photo">Vybrat fotku</button>
+      <img id="photoUploadPreview" class="upload-preview ${currentPhoto ? "" : "is-empty"}" src="${currentPhoto || "assets/court-top-view.png"}" alt="Nahled obrazku">
+      <label class="primary-button file-upload-button">
+        Vybrat fotku
+        <input type="file" accept="image/*" data-image-upload data-image-kind="${kind}" data-target-id="${targetId}" data-preview="photoUploadPreview">
+      </label>
     </div>
   `;
 }
@@ -6428,6 +6563,12 @@ function eventAdminModal() {
         <div class="field"><label>Do</label><input id="eventEndInput" type="time" value="14:00"></div>
         <div class="field"><label>Startovne</label><input id="eventFeeInput" value="Zdarma"></div>
         <div class="field"><label>Obrazek akce</label><select id="eventVisualInput">${options}</select></div>
+        <div class="field upload-field">
+          <label>Vlastni obrazek akce</label>
+          <img id="eventCreatePreview" class="upload-preview" src="${eventThumbnails[0].image}" alt="Nahled akce">
+          <input id="eventImageUrlInput" type="hidden" value="">
+          <label class="secondary-button file-upload-button">Vybrat z telefonu nebo souboru<input type="file" accept="image/*" data-image-upload data-image-kind="event" data-target-id="new" data-preview="eventCreatePreview" data-url-input="eventImageUrlInput"></label>
+        </div>
         <div class="field"><label>Detail</label><textarea id="eventDetailInput">Prezentace, testovani a objednavky produktu navazane na obsazenost kurtu.</textarea></div>
       </div>
       <button class="primary-button" data-confirm="event">Ulozit akci</button>
@@ -6446,7 +6587,9 @@ function adminCourtModal(data) {
         <h2 id="modalTitle">${isNew ? "Novy kurt" : court.name}</h2>
         <p class="muted">${isNew ? "Pridej dalsi kurt klubu. Hned se objevi v rezervacich, ceniku i dennim prehledu." : "Spravce meni fotku, povrch, barvy, cenu, otevirani a blokace kurtu."}</p>
       </div>
-      <img class="modal-court-image" src="${court.photo}" alt="${court.name}">
+      <img id="courtPhotoPreview" class="modal-court-image" src="${court.photo}" alt="${court.name}">
+      <input id="courtPhotoUrlInput" type="hidden" value="${court.photo}">
+      <label class="secondary-button file-upload-button">Nahrat vlastni fotku kurtu<input type="file" accept="image/*" data-image-upload data-image-kind="court" data-target-id="${isNew ? "new" : court.id}" data-preview="courtPhotoPreview" data-url-input="courtPhotoUrlInput"></label>
       <div class="form-grid">
         <div class="field"><label>Nazev</label><input id="courtNameInput" value="${court.name}"></div>
         <div class="field"><label>Povrch</label><select id="courtSurfaceInput"><option ${court.surface === "Antuka" ? "selected" : ""}>Antuka</option><option ${court.surface === "Umele" ? "selected" : ""}>Umele</option><option ${court.surface === "Trava" ? "selected" : ""}>Trava</option></select></div>
@@ -6568,10 +6711,11 @@ function legacyAdminPlayerModal(data) {
 function adminEventModal(data) {
   const event = events.find((item) => item.id === data.event) || events[1];
   const thumb = eventThumbnail(event.thumbnail || (event.id.includes("doubles") ? "doubles" : event.id.includes("shoes") ? "shoes" : "rackets"));
-  const options = eventThumbnails.map((item) => `<option value="${item.id}" ${item.id === thumb.id ? "selected" : ""}>${item.label}</option>`).join("");
+  const customThumbnail = /^https?:\/\//i.test(event.thumbnail || "");
+  const options = `${customThumbnail ? `<option value="${event.thumbnail}" selected>Vlastni obrazek</option>` : ""}${eventThumbnails.map((item) => `<option value="${item.id}" ${item.id === thumb.id ? "selected" : ""}>${item.label}</option>`).join("")}`;
   return `
     <div class="modal-body">
-      <img class="modal-court-image event-hero-image" src="${thumb.image}" alt="${thumb.label}">
+      <img id="adminEventImagePreview" class="modal-court-image event-hero-image" src="${thumb.image}" alt="${thumb.label}">
       <div>
         <p class="eyebrow">Sprava akce</p>
         <h2 id="modalTitle">${event.title}</h2>
@@ -6582,6 +6726,11 @@ function adminEventModal(data) {
         <div class="field"><label>Termin</label><input id="adminEventMetaInput" value="${event.meta}"></div>
         <div class="field"><label>Startovne</label><input id="adminEventFeeInput" value="${event.fee}"></div>
         <div class="field"><label>Thumbnail</label><select id="adminEventThumbInput">${options}</select></div>
+        <div class="field upload-field">
+          <label>Vlastni obrazek</label>
+          <input id="adminEventImageUrlInput" type="hidden" value="${customThumbnail ? event.thumbnail : ""}">
+          <label class="secondary-button file-upload-button">Nahrat novy obrazek<input type="file" accept="image/*" data-image-upload data-image-kind="event" data-target-id="${event.id}" data-preview="adminEventImagePreview" data-url-input="adminEventImageUrlInput"></label>
+        </div>
         <div class="field"><label>Prihlaseni</label><textarea id="adminEventRegisteredInput">${event.registered.join("\n")}</textarea></div>
         <div class="field"><label>Vysledky / historie</label><textarea id="adminEventHistoryInput">${event.history || "Doplnit po akci: vysledky, viteze, fotky, YouTube odkazy."}</textarea></div>
       </div>
@@ -6655,7 +6804,7 @@ function adminSettingsModal() {
       <div class="form-grid">
         <div class="field"><label>Nazev klubu</label><input id="clubNameInput" value="${club.name}"></div>
         <div class="field"><label>Logo - text/inicialy</label><input id="clubLogoTextInput" value="${club.logoText || ""}" placeholder="SS"></div>
-        <div class="field"><label>Logo - URL obrazku</label><input id="clubLogoUrlInput" value="${club.logoUrl || ""}" placeholder="https://.../logo.png"></div>
+        <div class="field upload-field"><label>Logo klubu</label><img id="clubLogoPreview" class="upload-preview logo-preview" src="${club.logoUrl || "assets/club-logo-dm-192.png?v=78"}" alt="Logo klubu"><input id="clubLogoUrlInput" type="hidden" value="${club.logoUrl || ""}"><label class="secondary-button file-upload-button">Vybrat logo<input type="file" accept="image/*" data-image-upload data-image-kind="club-logo" data-target-id="club" data-preview="clubLogoPreview" data-url-input="clubLogoUrlInput"></label></div>
         <div class="field"><label>Otevreno od</label><input id="clubOpenSettingsInput" value="${club.open}"></div>
         <div class="field"><label>Zavreno</label><input id="clubCloseSettingsInput" value="${club.close}"></div>
         <div class="field"><label>Potvrzeni ucasti</label><select><option>Den pred terminem</option><option>Vypnuto</option><option>Jen trvale rezervace</option></select></div>
@@ -7110,7 +7259,7 @@ function adminPlayerModal(data) {
   return `
     <div class="modal-body player-admin-modal">
       <div class="profile-hero player-hero-card">
-        <span class="avatar profile-avatar">${player.initials}</span>
+        <span class="avatar profile-avatar" data-player="${player.id}">${avatarContent(player)}</span>
         <div>
           <p class="eyebrow">Sprava hrace</p>
           <h2 id="modalTitle">${player.name}</h2>
@@ -7447,6 +7596,11 @@ document.addEventListener("click", (event) => {
 document.addEventListener("input", (event) => {
   const discountSlider = event.target.closest("[data-discount-slider]");
   if (discountSlider) updatePlayerDiscount(discountSlider);
+});
+
+document.addEventListener("change", (event) => {
+  const imageInput = event.target.closest("[data-image-upload]");
+  if (imageInput) handleImageUpload(imageInput);
 });
 
 modalClose.addEventListener("click", closeModal);

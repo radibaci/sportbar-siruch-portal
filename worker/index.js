@@ -5,7 +5,7 @@ const STATE_KEY = "portal-state";
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Cache-Control": "no-store"
   };
@@ -131,6 +131,41 @@ async function handleRequest(request, env) {
       updatedAt: stored.updatedAt,
       summary: stateSummary(stored.state)
     });
+  }
+
+  if (url.pathname.startsWith("/api/images/")) {
+    const key = decodeURIComponent(url.pathname.slice("/api/images/".length));
+    if (!key || !/^[a-zA-Z0-9/_-]+\.(webp|png|jpe?g)$/i.test(key)) {
+      return json({ ok: false, error: "Invalid image key" }, 400);
+    }
+
+    if (request.method === "PUT") {
+      const contentType = request.headers.get("Content-Type") || "";
+      const contentLength = Number(request.headers.get("Content-Length") || 0);
+      if (!contentType.startsWith("image/")) return json({ ok: false, error: "Only images are allowed" }, 415);
+      if (contentLength > 1500 * 1024) return json({ ok: false, error: "Image is too large" }, 413);
+      const body = await request.arrayBuffer();
+      if (body.byteLength > 1500 * 1024) return json({ ok: false, error: "Image is too large" }, 413);
+      await env.DB.prepare(`
+        INSERT INTO image_assets (key, content_type, body, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          content_type = excluded.content_type,
+          body = excluded.body,
+          created_at = excluded.created_at
+      `).bind(key, contentType, body, new Date().toISOString()).run();
+      return json({ ok: true, url: `${url.origin}/api/images/${encodeURIComponent(key)}` });
+    }
+
+    if (request.method === "GET") {
+      const object = await env.DB.prepare("SELECT content_type, body FROM image_assets WHERE key = ?").bind(key).first();
+      if (!object) return json({ ok: false, error: "Image not found" }, 404);
+      const headers = new Headers(corsHeaders());
+      headers.set("Content-Type", object.content_type);
+      headers.set("Cache-Control", "public, max-age=31536000, immutable");
+      const bytes = object.body instanceof ArrayBuffer ? new Uint8Array(object.body) : Uint8Array.from(object.body || []);
+      return new Response(bytes, { headers });
+    }
   }
 
   if (url.pathname === "/api/state" && request.method === "GET") {
