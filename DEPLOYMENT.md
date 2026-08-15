@@ -1,63 +1,62 @@
-# Testovaci nasazeni zdarma
+# Verejne testovaci nasazeni
 
-## GitHub Pages
+## Adresy
 
-Portal je staticky web, takze muze bezet zdarma na GitHub Pages.
+- Portal: `https://tenissiruch.pages.dev`
+- Produkcni Pages projekt: `tenissiruch`
+- API Worker: `tenissiruch-api` (z portalu je dostupny jen pres `/api`)
+- D1 databaze: `tenissiruch_portal`, region WEUR
 
-1. Prihlas se do GitHub CLI:
+Hracum se posila pouze adresa portalu. Interni Worker URL ani Cloudflare ucet nejsou soucasti verejneho odkazu.
 
-```powershell
-"C:\Program Files\GitHub CLI\gh.exe" auth login
-```
-
-2. Vytvor verejny repozitar a nahraj kod:
+## Bezna aktualizace
 
 ```powershell
 cd C:\Users\martin.kadlcik\Documents\codex\tennis-club-portal
-"C:\Program Files\GitHub CLI\gh.exe" repo create sportbar-siruch-portal --public --source . --remote origin --push
+npm run test:ops
+npm run v2:typecheck
+npm run pages:deploy
 ```
 
-3. Zapni Pages:
+`pages:deploy` sestavi pouze verejne soubory do `dist`, nahraje Pages Functions proxy a vytvori novy produkcni deployment. Zdrojove testy, migrace ani interni dokumentace se na web neposilaji.
+
+## Aktualizace API
 
 ```powershell
-"C:\Program Files\GitHub CLI\gh.exe" api repos/:owner/sportbar-siruch-portal/pages -X POST -f source.branch=main -f source.path=/
+npm run v2:typecheck
+npm run v2:migrate:production
+npm run v2:deploy:production
 ```
 
-Adresa bude ve tvaru:
+Po nasazeni spust smoke test s prihlasovacimi udaji urcenymi jen pro kontrolu releasu:
 
-```text
-https://TVUJ_UCET.github.io/sportbar-siruch-portal/
+```powershell
+$env:PLATFORM_API_URL = "https://tenissiruch.pages.dev"
+$env:SMOKE_EMAIL = "radim@siruch.cz"
+$env:SMOKE_PASSWORD = "siruch-radim"
+npm run v2:smoke
 ```
-
-GitHub Pages muze po prvnim zapnuti potrebovat nekolik minut.
 
 ## Testovaci ucty
 
 | Role | E-mail | Heslo |
 | --- | --- | --- |
+| Radim | radim@siruch.cz | siruch-radim |
 | Robin | robin@siruch.cz | siruch-robin |
 | Bob | bob@siruch.cz | siruch-bob |
 | Honza | honza@siruch.cz | siruch-honza |
 | Marek | marek@siruch.cz | siruch-marek |
 | Darek | darek@siruch.cz | siruch-darek |
 | Filip | filip@siruch.cz | siruch-filip |
-| Radim | radim@siruch.cz | siruch-radim |
 | Zbyna | zbyna@siruch.cz | siruch-zbyna |
 | Handa | handa@siruch.cz | siruch-handa |
 | Prema | prema@siruch.cz | siruch-prema |
 | Viki | viki@siruch.cz | siruch-viki |
 | Spravce | spravce@siruch.cz | siruch-admin |
+| Spravce klubu | provoz@siruch.cz | siruch-provoz |
 | Vypletac | vypletac@siruch.cz | siruch-vyplet |
-| Obchodnik | obchod@siruch.cz | siruch-obchod |
+| Obchod | obchod@siruch.cz | siruch-obchod |
 
-V teto staticke testovaci verzi se heslo neposila skutecnym e-mailem. Portal po kliknuti na "Poslat heslo" ukaze simulovany e-mail primo v prihlasovacim okne. Ostre posilani e-mailu bude potreba pres API/backend.
+## Zname omezeni testovaciho provozu
 
-## Telefon a odznak zpráv
-
-1. Otevri HTTPS adresu portalu na telefonu.
-2. Android Chrome: menu se tremi teckami -> Pridat na plochu / Instalovat aplikaci.
-3. iPhone Safari: Sdilet -> Pridat na plochu.
-4. V aplikaci otevri Profil -> Zapnout notifikace a odznak.
-5. Pouzij Test cisla na ikone.
-
-Odznak s cislem funguje jen v podporovanych prohlizecich a hlavne pro nainstalovanou PWA aplikaci.
+Cloudflare R2 zatim neni na uctu aktivovane. Nahravani novych uzivatelskych fotografii proto vrati kontrolovanou chybu `media_unavailable`; ostatni funkce pouzivaji D1 a bezi nezavisle. Po aktivaci R2 se prida bucket `tenissiruch-media` jako binding `MEDIA` do `wrangler.production.jsonc`.

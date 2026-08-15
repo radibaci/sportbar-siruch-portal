@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "tenissiruch-api",
+  "main": "worker-v2/index.ts",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "APP_ENV": "production",
+    "ALLOWED_ORIGINS": "https://tenissiruch.pages.dev",
+    "SESSION_COOKIE_NAME": "tennis_portal_session",
+    "VAPID_SUBJECT": "mailto:portal@tenissiruch.cz",
+    "VAPID_PUBLIC_KEY": "BJhb7uibIHTarjlyUu9AxvmxSrmcbIpRG_yHhu98ffyoQBc9zj-s7HZrc2v0R-Kq4TrfoGYVPPE85XZq5Kz4Yrc"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tenissiruch_portal",
+      "database_id": "461b4add-3284-4480-92d0-538133c90722",
+      "migrations_dir": "migrations-v2",
+      "migrations_table": "v2_d1_migrations"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/2 * * * *"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+  }
+}

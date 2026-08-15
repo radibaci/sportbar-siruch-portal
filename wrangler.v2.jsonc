@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "tennis-club-platform-v2",
+  "main": "worker-v2/index.ts",
+  "compatibility_date": "2026-08-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "vars": {
+    "APP_ENV": "development",
+    "ALLOWED_ORIGINS": "http://localhost:4173,http://localhost:4213,http://localhost:8788,https://radibaci.github.io",
+    "SESSION_COOKIE_NAME": "tennis_portal_session",
+    "VAPID_SUBJECT": "mailto:portal@sportbarsiruch.cz",
+    "VAPID_PUBLIC_KEY": "BFkFSbssKeGVcq0RsTk-VBPngH9XRloEHaAnwjt2kRNJEgTdCm7VQwN93WTTzofnu6afsOpJhAKHCwtGdwG3ZNg"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      // Local-only placeholder. Replace it only after creating a separate EU staging database.
+      "database_name": "tennis_club_platform_v2_staging",
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "migrations_dir": "migrations-v2",
+      "migrations_table": "v2_d1_migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "tennis-club-platform-media"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/2 * * * *"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+  }
+}

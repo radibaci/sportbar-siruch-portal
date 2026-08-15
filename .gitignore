@@ -1,5 +1,12 @@
 data/*.json
 data/*.tmp
 node_modules/
+dist/
 .wrangler/
+.dev.vars
+.dev.vars.*
+.tmp-workers-types/
+.tmp-v2-seed.sql
+.tmp-*
+backups/
 *.psd

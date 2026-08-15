@@ -1,16 +1,16 @@
-const CACHE_NAME = "tennis-club-portal-v85";
-const APP_START_URL = "./index.html?api=https%3A%2F%2Fsportbar-siruch-api.bacik.workers.dev&v=81";
+const CACHE_NAME = "tennis-club-portal-v124";
+const APP_START_URL = "./index.html?v=124";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=81",
-  "./app.js?v=81",
-  "./manifest.webmanifest?v=81",
-  "./assets/app-icon-192.png?v=76",
-  "./assets/app-icon-512.png?v=76",
-  "./assets/club-logo-dm.png?v=76",
-  "./assets/club-logo-dm-192.png?v=76",
-  "./assets/club-logo-dm-512.png?v=76",
+  "./styles.css?v=124",
+  "./app.js?v=124",
+  "./manifest.webmanifest?v=124",
+  "./assets/app-icon-192.png?v=124",
+  "./assets/app-icon-512.png?v=124",
+  "./assets/club-logo-dm.png?v=124",
+  "./assets/club-logo-dm-192.png?v=124",
+  "./assets/club-logo-dm-512.png?v=124",
   "./assets/court-top-view.png",
   "./assets/club-shop-hero.png",
   "./assets/event-doubles.png",
@@ -45,7 +45,7 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
           return response;
         })
-        .catch(() => caches.match(request))
+        .catch(async () => (await caches.match(request)) || (await caches.match(APP_START_URL)) || caches.match("./index.html"))
     );
     return;
   }
@@ -65,8 +65,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(Promise.all([
     self.registration.showNotification(data.title || "Sportbar Siruch", {
       body: data.body || "Nova zprava v klubovem portalu.",
-      icon: "assets/club-logo-dm-192.png?v=78",
-      badge: "assets/club-logo-dm-192.png?v=78",
+      icon: "assets/club-logo-dm-192.png?v=124",
+      badge: "assets/club-logo-dm-192.png?v=124",
       tag: data.notificationId || undefined,
       renotify: true,
       data: { url: data.url || APP_START_URL, notificationId: data.notificationId }
@@ -78,5 +78,12 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const targetUrl = event.notification.data?.url || APP_START_URL;
-  event.waitUntil(clients.openWindow(targetUrl));
+  event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (windows) => {
+    const existing = windows.find((client) => new URL(client.url).origin === self.location.origin);
+    if (existing) {
+      await existing.navigate(targetUrl);
+      return existing.focus();
+    }
+    return clients.openWindow(targetUrl);
+  }));
 });

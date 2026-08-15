@@ -1,7 +1,7 @@
 const club = {
   name: "Sportbar Siruch",
   logoText: "DM",
-  logoUrl: "assets/club-logo-dm-192.png?v=76",
+  logoUrl: "assets/club-logo-dm-192.png?v=124",
   open: "8:00",
   close: "21:00",
   slotMinutes: 30,
@@ -28,6 +28,19 @@ const appToday = new Date();
 appToday.setHours(12, 0, 0, 0);
 const weekdayCodes = ["Ne", "Po", "Ut", "St", "Ct", "Pa", "So"];
 
+function upcomingWeekdayIso(weekday, minimumDaysAhead = 0) {
+  const date = new Date(appToday);
+  let offset = (weekday - date.getDay() + 7) % 7;
+  if (offset < minimumDaysAhead) offset += 7;
+  date.setDate(date.getDate() + offset);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+const seedFridayIso = upcomingWeekdayIso(5, 1);
+
 const state = {
   role: "player",
   persona: "radim",
@@ -43,8 +56,351 @@ const state = {
   attendanceRequired: true,
   notificationsEnabled: true,
   replacementOffered: false,
+  adminPlayerSearch: "",
   collapsedSections: new Set()
 };
+
+const HELP_PROGRESS_KEY = "tennis-portal-help-progress-v1";
+const helpTopics = [
+  {
+    id: "player-booking",
+    roles: ["player"],
+    views: ["booking"],
+    title: "Vytvoreni rezervace",
+    summary: "Vyber data, kurtu, casu a spoluhrace pro single nebo double.",
+    steps: [
+      { target: "[data-help-target='booking-date']", title: "Vyber datum", text: "Pouzij rychly tyden nebo den v mesicnim kalendari." },
+      { target: "[data-help-target='booking-courts']", title: "Vyber kurt a cas", text: "Volne pulhodiny jsou svetle zelene. Klepnutim otevres rezervaci." },
+      { target: "[data-help-target='player-reservations']", title: "Zkontroluj vysledek", text: "V Moje rezervace uvidis sestavu, potvrzeni i delku hry." }
+    ]
+  },
+  {
+    id: "player-home",
+    roles: ["player"],
+    views: ["home"],
+    title: "Oznameni a navrhy na hru",
+    summary: "Potvrzeni ucasti, pozvanky, protinavrhy a hledani nahradnika.",
+    steps: [
+      { target: "[data-help-target='player-notifications']", title: "Oznameni", text: "Tady potvrdis pozvanku, ucast nebo vyridis zadost od spoluhrace." },
+      { target: "[data-help-target='player-proposals']", title: "Navrhy na hru", text: "U navrhu vidis, kdo uz potvrdil a kdo jeste neodpovedel." },
+      { target: "[data-help-target='player-reservations']", title: "Aktualni sestava", text: "Po potvrzeni se hra propise do rezervaci a kalendare." }
+    ]
+  },
+  {
+    id: "player-community",
+    roles: ["player"],
+    views: ["players"],
+    title: "Hraci, pratele a hledani hry",
+    summary: "Pozvi hrace, posli zadost o pratelstvi nebo reaguj na hledani hry.",
+    steps: [
+      { target: "[data-help-target='player-searches']", title: "Hledaji spoluhrace", text: "Tady uvidis otevrene hry, do kterych se muzes prihlasit." },
+      { target: "[data-help-target='player-friends']", title: "Moji kamaradi", text: "Potvrzeni kamaradi se nabizeji jako prvni pri pozvani a hledani nahradnika." },
+      { target: "[data-help-target='player-directory']", title: "Hraci klubu", text: "Rozbal seznam, otevri profil a posli zadost o pratelstvi nebo pozvanku na hru." }
+    ]
+  },
+  {
+    id: "player-events",
+    roles: ["player"],
+    views: ["events"],
+    title: "Akce a turnaje",
+    summary: "Podrobnosti, prihlaseni, startovne, vysledky a pozvani pratel.",
+    steps: [
+      { target: "[data-help-target='player-events']", title: "Otevri akci", text: "Karta ukaze termin a typ akce, detail obsahuje registraci a dalsi informace." },
+      { target: "[data-help-target='player-tournaments']", title: "Turnaje", text: "U turnaje uvidis uzaverku, startovne, prihlasene a pozdeji vysledky." }
+    ]
+  },
+  {
+    id: "player-profile",
+    roles: ["player"],
+    views: ["profile"],
+    title: "Kredit, sleva a nastaveni",
+    summary: "Prehled kreditu, bonusu, vernosti a upozorneni.",
+    steps: [
+      { target: "[data-help-target='player-profile-summary']", title: "Profil hrace", text: "Tady zmenis fotku a zkontrolujes zakladni udaje." },
+      { target: "[data-help-target='player-wallet']", title: "Kredit, sleva a vernost", text: "Vidis skladbu slevy, kredit, finalni cenu a postup do dalsi urovne." },
+      { target: "[data-help-target='player-profile-settings']", title: "Rychla nastaveni", text: "Spravuj potvrzovani ucasti, kontakt, objednavky a soukromi." }
+    ]
+  },
+  {
+    id: "player-orders",
+    roles: ["player"],
+    views: ["orders"],
+    title: "Objednavky a vyplety",
+    summary: "Stav zbozi, predani k rezervaci a servis rakety.",
+    steps: [
+      { target: "[data-help-target='player-orders']", title: "Moje objednavky", text: "U kazde polozky vidis stav a zpusob predani v klubu." },
+      { target: "[data-help-target='player-stringing']", title: "Vyplety raket", text: "Portal ukazuje, zda je raketa v klubu, u vypletace nebo pripravena k vyzvednuti." },
+      { target: "[data-help-target='player-shop']", title: "Klubovy obchod", text: "Dalsi zbozi nebo servis objednas primo tady." }
+    ]
+  },
+  {
+    id: "admin-dashboard",
+    roles: ["admin"],
+    views: ["home"],
+    title: "Prehled a nastaveni klubu",
+    summary: "Vytizenost, prijmy, kurty, cenove bonusy a provozni upozorneni.",
+    steps: [
+      { target: "[data-help-target='admin-overview']", title: "Stav dnes", text: "Rychle zkontroluj vytizeni, rezervace a polozky k vyrizeni." },
+      { target: "[data-help-target='admin-courts']", title: "Sprava kurtu", text: "Pridej kurt nebo otevri jeho nazev, povrch, dobu a cenove useky." },
+      { target: "[data-help-target='admin-credit-bonus']", title: "Bonusy za kredit", text: "Nastav pravidla bonusu pri rucnim dobiti kreditu." }
+    ]
+  },
+  {
+    id: "admin-booking",
+    roles: ["admin"],
+    views: ["booking"],
+    title: "Rezervace a specialni obsazenost",
+    summary: "Rucni a trvale rezervace, blokace, turnaje, treninky a servis.",
+    steps: [
+      { target: "[data-help-target='admin-reservation-create']", title: "Rucni rezervace", text: "Vytvor jednorazovou nebo trvalou rezervaci za hrace." },
+      { target: "[data-help-target='admin-special-occupancy']", title: "Specialni blok", text: "Vyber kurt, termin a typ obsazenosti mimo beznou hru." },
+      { target: "[data-help-target='admin-day-control']", title: "Kontrola dne", text: "Rozvrh ukazuje skutecnou obsazenost kazdeho kurtu a dovoluje pridat blok primo do volneho slotu." }
+    ]
+  },
+  {
+    id: "admin-players",
+    roles: ["admin"],
+    views: ["players"],
+    title: "Hraci, kredity a slevy",
+    summary: "Vyhledani hrace, rucni kredit, sleva, poznamky a historie.",
+    steps: [
+      { target: "[data-help-target='admin-player-search']", title: "Najdi hrace", text: "Zadej cast jmena nebo e-mailu a potvrd hledani lupou." },
+      { target: "[data-help-target='admin-player-list']", title: "Otevri kartu", text: "Karta hrace obsahuje kredit, slevy, rezervace a spravcovske poznamky." }
+    ]
+  },
+  {
+    id: "admin-events",
+    roles: ["admin"],
+    views: ["events"],
+    title: "Akce, ankety a turnaje",
+    summary: "Vytvoreni, schvaleni dodavatelem, publikace, registrace a vysledky.",
+    steps: [
+      { target: "[data-help-target='admin-events']", title: "Nova akce", text: "Zadej konkretni datum, detail, obrazek, kapacitu a pripadne startovne." },
+      { target: "[data-help-target='admin-polls']", title: "Anketa", text: "Nech hrace hlasovat a z vysledku priprav testovaci akci." },
+      { target: "[data-help-target='admin-tournaments']", title: "Turnaj", text: "Nastav registraci, skupiny, los a nasledny vyrazovaci pavouk." }
+    ]
+  },
+  {
+    id: "admin-orders",
+    roles: ["admin"],
+    views: ["orders"],
+    title: "Objednavky a vyplety",
+    summary: "Prijeti objednavky, sklad nebo dodavatel, priprava a predani hraci.",
+    steps: [
+      { target: "[data-help-target='admin-orders']", title: "Objednavky hracu", text: "Zkontroluj termin predani a rozhodni sklad nebo objednani u dodavatele." },
+      { target: "[data-help-target='admin-stringing']", title: "Vyplety raket", text: "Sleduj predani mezi klubem a vypletacem a nachystani rakety hraci." }
+    ]
+  },
+  {
+    id: "service-role",
+    roles: ["stringer", "seller"],
+    views: ["home", "booking", "players", "events", "profile"],
+    title: "Pracovni prehled",
+    summary: "Zakazky, terminy, predani klubu a potvrzeni dodavky.",
+    steps: [
+      { target: "[data-help-target='service-work']", title: "Polozky k vyrizeni", text: "Zpracuj pouze polozky prirazene tve roli a aktualizuj jejich stav." },
+      { target: ".bottom-nav", title: "Prepinani sekci", text: "Navigace ukazuje pracovni tok, kontakty a souvisejici akce." }
+    ]
+  },
+  {
+    id: "guest-start",
+    roles: ["guest"],
+    views: ["home", "booking"],
+    title: "Rezervace hosta",
+    summary: "Kontakt, jednorazovy kod, volny slot a pravidla uhrady na klubu.",
+    steps: [
+      { target: "[data-help-target='guest-entry']", title: "Zacni jako host", text: "Zadej pouze nezbytny kontakt a pokracuj na vyber terminu." },
+      { target: "[data-help-target='guest-courts-heading']", title: "Vyber volny slot", text: "Pod nadpisem jsou kurty a jejich pulhodinove sloty bez pristupu k clenskym datum." }
+    ]
+  }
+];
+
+let activeHelpTour = null;
+
+function currentHelpRole() {
+  if (["admin", "guest", "stringer", "seller"].includes(state.role)) return state.role;
+  return "player";
+}
+
+function completedHelpTopics() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(HELP_PROGRESS_KEY) || "[]");
+    return new Set(Array.isArray(stored) ? stored : []);
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function saveHelpCompletion(topicId) {
+  const completed = completedHelpTopics();
+  completed.add(topicId);
+  try {
+    localStorage.setItem(HELP_PROGRESS_KEY, JSON.stringify([...completed]));
+  } catch (_) {}
+}
+
+function helpTopicById(topicId) {
+  return helpTopics.find((topic) => topic.id === topicId);
+}
+
+function helpTopicsForCurrentView() {
+  const role = currentHelpRole();
+  return helpTopics.filter((topic) => topic.roles.includes(role) && topic.views.includes(state.view));
+}
+
+function helpCenterModal() {
+  const roleLabels = {
+    player: "Hrac",
+    admin: "Spravce klubu",
+    guest: "Host",
+    stringer: "Vypletac",
+    seller: "Obchodnik"
+  };
+  const viewLabels = {
+    home: "Domu",
+    booking: "Rezervace",
+    players: "Hraci",
+    events: "Akce",
+    orders: "Objednavky",
+    profile: "Profil"
+  };
+  const completed = completedHelpTopics();
+  const current = helpTopicsForCurrentView();
+  const available = helpTopics.filter((topic) => topic.roles.includes(currentHelpRole()));
+  const ordered = [...current, ...available.filter((topic) => !current.includes(topic))];
+  return `
+    <div class="modal-body help-center">
+      <div>
+        <p class="eyebrow">${roleLabels[currentHelpRole()] || "Portal"} · ${viewLabels[state.view] || "Aktualni obrazovka"}</p>
+        <h2 id="modalTitle">Jak vam muzeme pomoci?</h2>
+        <p class="muted">Vyberte kratke tema. Prvni jsou navody pro prave otevrenou cast portalu.</p>
+      </div>
+      <div class="help-topic-list">
+        ${ordered.map((topic) => `
+          <button class="help-topic-card ${current.includes(topic) ? "is-current" : ""}" data-action="help-topic" data-topic="${topic.id}">
+            <span class="help-topic-symbol" aria-hidden="true">${completed.has(topic.id) ? "✓" : "?"}</span>
+            <span><strong>${topic.title}</strong><small>${topic.summary}</small></span>
+            <b aria-hidden="true">›</b>
+          </button>
+        `).join("")}
+      </div>
+      <p class="help-privacy-note">Napoveda je soucasti aplikace. Nic neodesila AI ani externi sluzbe.</p>
+    </div>
+  `;
+}
+
+function helpTopicModal(data = {}) {
+  const topic = helpTopicById(data.topic) || helpTopicsForCurrentView()[0];
+  if (!topic) return helpCenterModal();
+  return `
+    <div class="modal-body help-topic-detail">
+      <div>
+        <p class="eyebrow">Napoveda krok za krokem</p>
+        <h2 id="modalTitle">${topic.title}</h2>
+        <p class="muted">${topic.summary}</p>
+      </div>
+      <ol class="help-step-list">
+        ${topic.steps.map((step, index) => `
+          <li><span class="help-step-number">${index + 1}</span><span><strong>${step.title}</strong><small>${step.text}</small></span></li>
+        `).join("")}
+      </ol>
+      <button class="primary-button" data-confirm="help-start" data-topic="${topic.id}">Ukazat primo v aplikaci</button>
+    </div>
+  `;
+}
+
+function clearHelpTarget() {
+  document.querySelectorAll(".help-target-active").forEach((element) => element.classList.remove("help-target-active"));
+}
+
+function stopHelpTour(completed = false) {
+  const topic = activeHelpTour ? helpTopicById(activeHelpTour.topicId) : null;
+  clearHelpTarget();
+  activeHelpTour = null;
+  if (helpCoachmark) {
+    helpCoachmark.hidden = true;
+    helpCoachmark.innerHTML = "";
+  }
+  if (completed && topic) {
+    saveHelpCompletion(topic.id);
+    showToast("Navod je dokonceny. Kdykoliv se k nemu vratite pres otaznik nahore.");
+  }
+}
+
+function showHelpTourStep() {
+  if (!activeHelpTour) return;
+  const topic = helpTopicById(activeHelpTour.topicId);
+  const steps = activeHelpTour.steps || [];
+  const step = steps[activeHelpTour.step];
+  if (!topic || !step) {
+    stopHelpTour(false);
+    return;
+  }
+
+  clearHelpTarget();
+  const target = document.querySelector(step.target);
+  if (!target) {
+    activeHelpTour.steps = steps.filter((item) => document.querySelector(item.target));
+    activeHelpTour.step = Math.min(activeHelpTour.step, Math.max(0, activeHelpTour.steps.length - 1));
+    if (!activeHelpTour.steps.length) {
+      stopHelpTour(false);
+      showToast("Tento navod ted neni pro otevrenou obrazovku dostupny.");
+      return;
+    }
+    showHelpTourStep();
+    return;
+  }
+  target.classList.add("help-target-active");
+  target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  const isLast = activeHelpTour.step === steps.length - 1;
+  helpCoachmark.innerHTML = `
+    <div class="help-coachmark-head">
+      <span>Krok ${activeHelpTour.step + 1} z ${steps.length}</span>
+      <button data-help-tour="close" aria-label="Zavrit napovedu" title="Zavrit">&times;</button>
+    </div>
+    <strong>${step.title}</strong>
+    <p>${step.text}</p>
+    <div class="help-coachmark-actions">
+      <button class="secondary-button" data-help-tour="back" ${activeHelpTour.step === 0 ? "disabled" : ""}>Zpet</button>
+      <button class="primary-button" data-help-tour="next">${isLast ? "Dokoncit" : "Dalsi"}</button>
+    </div>
+  `;
+  helpCoachmark.hidden = false;
+}
+
+function startHelpTour(topicId) {
+  const topic = helpTopicById(topicId);
+  if (!topic) return;
+  closeModal();
+  if (!topic.views.includes(state.view)) {
+    state.view = topic.views[0];
+    render();
+  }
+  const steps = topic.steps.filter((step) => document.querySelector(step.target));
+  if (!steps.length) {
+    showToast("Tento navod ted neni dostupny.");
+    return;
+  }
+  activeHelpTour = { topicId: topic.id, steps, step: 0 };
+  window.setTimeout(showHelpTourStep, 60);
+}
+
+function moveHelpTour(direction) {
+  if (!activeHelpTour) return;
+  const topic = helpTopicById(activeHelpTour.topicId);
+  if (!topic) return stopHelpTour();
+  if (direction === "back") {
+    activeHelpTour.step = Math.max(0, activeHelpTour.step - 1);
+    showHelpTourStep();
+    return;
+  }
+  if (activeHelpTour.step >= activeHelpTour.steps.length - 1) {
+    stopHelpTour(true);
+    return;
+  }
+  activeHelpTour.step += 1;
+  showHelpTourStep();
+}
 
 const demoLoginAccounts = [
   { email: "robin@siruch.cz", password: "siruch-robin", role: "player", persona: "robin", label: "Robin" },
@@ -81,7 +437,7 @@ const courts = [
     color: "#c66532",
     photo: courtPhoto,
     reservations: [
-      { isoDate: "2026-06-19", start: "17:00", end: "19:00", title: "Patecni double", type: "mine", players: ["Radim", "Robin", "Bob", "Honza"] }
+      { isoDate: seedFridayIso, start: "17:00", end: "19:00", title: "Patecni double", type: "mine", players: ["Radim", "Robin", "Bob", "Honza"] }
     ]
   },
   {
@@ -460,15 +816,18 @@ const players = [
 const guestProfiles = [];
 
 const adminPlayerDirectory = [...players];
+adminPlayerDirectory.forEach((player) => {
+  player.adminNote = visibleAdminNote(player);
+});
 
 let courtPriceRules = [
-  { court: "c1", days: "Po-Pa", start: "8:00", end: "15:00", price: 160 },
-  { court: "c1", days: "Po-Pa", start: "15:00", end: "21:00", price: 240 },
-  { court: "c1", days: "So-Ne", start: "8:00", end: "21:00", price: 210 },
-  { court: "c2", days: "Po-Pa", start: "8:00", end: "16:00", price: 150 },
-  { court: "c2", days: "Po-Pa", start: "16:00", end: "21:00", price: 220 },
-  { court: "c3", days: "Po-Ne", start: "8:00", end: "21:00", price: 190 },
-  { court: "c4", days: "So-Ne", start: "9:00", end: "20:00", price: 230 }
+  { id: "local-price-c1-weekday-morning", court: "c1", days: "Po-Pa", start: "8:00", end: "15:00", price: 160 },
+  { id: "local-price-c1-weekday-afternoon", court: "c1", days: "Po-Pa", start: "15:00", end: "21:00", price: 240 },
+  { id: "local-price-c1-weekend", court: "c1", days: "So-Ne", start: "8:00", end: "21:00", price: 210 },
+  { id: "local-price-c2-weekday-morning", court: "c2", days: "Po-Pa", start: "8:00", end: "16:00", price: 150 },
+  { id: "local-price-c2-weekday-afternoon", court: "c2", days: "Po-Pa", start: "16:00", end: "21:00", price: 220 },
+  { id: "local-price-c3-all", court: "c3", days: "Po-Ne", start: "8:00", end: "21:00", price: 190 },
+  { id: "local-price-c4-weekend", court: "c4", days: "So-Ne", start: "9:00", end: "20:00", price: 230 }
 ];
 
 const events = [];
@@ -482,13 +841,17 @@ const eventThumbnails = [
 ];
 
 const tournaments = [];
+const reservationSeries = [];
 
 function eventThumbnail(id = "rackets") {
-  if (/^https?:\/\//i.test(id)) return { id: "custom", label: "Vlastni obrazek", image: id };
-  return eventThumbnails.find((item) => item.id === id) || eventThumbnails[0];
+  const known = eventThumbnails.find((item) => item.id === id || item.image === id);
+  if (known) return known;
+  if (/^(https?:\/\/|assets\/|data:image\/)/i.test(id)) return { id: "custom", label: "Vlastni obrazek", image: id };
+  return eventThumbnails[0];
 }
 
 const payments = [];
+const creditTransactions = [];
 
 const notifications = [];
 const friendships = [];
@@ -520,9 +883,9 @@ const motivationLines = [
 const personalReservations = [
   {
     id: "fri-double-1700",
-    isoDate: "2026-06-19",
+    isoDate: seedFridayIso,
     day: "Pa",
-    date: "19",
+    date: String(new Date(`${seedFridayIso}T12:00:00`).getDate()),
     start: "17:00",
     end: "19:00",
     kind: "Jednorazova",
@@ -567,9 +930,9 @@ const courtUtilization = [
 const lastMinuteSuggestions = [];
 
 const creditBonusRules = [
-  { name: "Dobiti 3 000 Kc", paid: 3000, bonus: 100, note: "bonusovy kredit, cena kurtu zustava podle sazby a slevy hrace" },
-  { name: "Dobiti 5 000 Kc", paid: 5000, bonus: 220, note: "vetsi bonus pro caste hrace, evidovat oddelene od zaplacene castky" },
-  { name: "Dobiti 10 000 Kc", paid: 10000, bonus: 550, note: "klub muze zapnout jen vybranym typum hracu" }
+  { id: "credit-rule-3000", name: "Dobiti 3 000 Kc", paid: 3000, bonus: 100, note: "bonusovy kredit, cena kurtu zustava podle sazby a slevy hrace" },
+  { id: "credit-rule-5000", name: "Dobiti 5 000 Kc", paid: 5000, bonus: 220, note: "vetsi bonus pro caste hrace, evidovat oddelene od zaplacene castky" },
+  { id: "credit-rule-10000", name: "Dobiti 10 000 Kc", paid: 10000, bonus: 550, note: "klub muze zapnout jen vybranym typum hracu" }
 ];
 
 const loyaltyTiers = [
@@ -658,8 +1021,9 @@ const modalBackdrop = document.querySelector("#modalBackdrop");
 const modalContent = document.querySelector("#modalContent");
 const modalClose = document.querySelector("#modalClose");
 const toast = document.querySelector("#toast");
+const helpCoachmark = document.querySelector("#helpCoachmark");
 const STORAGE_KEY = "tennis-club-portal-state-v1";
-const DEMO_VERSION = 54;
+const DEMO_VERSION = 124;
 const DEFAULT_PUBLIC_API = "https://sportbar-siruch-api.bacik.workers.dev";
 const API_STORAGE_KEY = "tennis-club-api-base";
 const urlApiBase = new URLSearchParams(window.location.search).get("api") || "";
@@ -668,7 +1032,30 @@ try {
   storedApiBase = localStorage.getItem(API_STORAGE_KEY) || "";
   if (urlApiBase) localStorage.setItem(API_STORAGE_KEY, urlApiBase);
 } catch (_) {}
-const API_BASE = urlApiBase || storedApiBase || (window.location.hostname === "radibaci.github.io" ? DEFAULT_PUBLIC_API : "");
+const localApiBase = isLocalTestingHost(window.location.hostname) ? window.location.origin : "";
+const pagesApiBase = window.location.hostname.endsWith(".pages.dev") ? window.location.origin : "";
+const publicApiBase = isLocalTestingHost(window.location.hostname) ? "" : DEFAULT_PUBLIC_API;
+const API_BASE = urlApiBase || localApiBase || storedApiBase || pagesApiBase || publicApiBase;
+const PLATFORM_API_BASE = (new URLSearchParams(window.location.search).get("platformApi") || pagesApiBase).replace(/\/$/, "");
+const platformContext = {
+  enabled: Boolean(PLATFORM_API_BASE),
+  clubId: "",
+  membershipId: "",
+  userId: "",
+  email: "",
+  role: "",
+  membersByPersona: new Map(),
+  loadedDates: new Set(),
+  clubs: []
+};
+let platformAgenda = { reservations: [], events: [] };
+let platformAnalytics = null;
+let platformCharges = [];
+let platformPrivacy = { policyVersion: "2026-08-01", preferences: [], requests: [] };
+let platformNotificationPreferences = {};
+let platformConnections = { profile: {}, connections: [], notifications: [] };
+let platformModules = [];
+const SELECTED_CLUB_KEY = "tennis-platform-selected-club";
 const LOGIN_SESSION_KEY = "tennis-club-login-session";
 let sharedApiOnline = false;
 let suppressRemotePersist = false;
@@ -677,12 +1064,19 @@ let remoteUpdatedAt = "";
 let lastRemoteState = null;
 let lastLocalPersistAt = 0;
 let syncTimer = null;
+let platformSyncTimer = null;
+let platformSyncInFlight = false;
 let lastActionMessage = "";
 let remoteSaveQueue = Promise.resolve();
 let remoteSavesPending = 0;
+let stateRevisionAt = "";
+
+function isLocalTestingHost(hostname = "") {
+  return ["localhost", "127.0.0.1", "::1", ""].includes(hostname);
+}
 
 function isLocalTestingMode() {
-  return ["localhost", "127.0.0.1", "::1", ""].includes(window.location.hostname);
+  return isLocalTestingHost(window.location.hostname);
 }
 
 function savedLoginSession() {
@@ -723,7 +1117,779 @@ function saveLoginSession(account) {
 
 function updateRoleSwitcherVisibility() {
   const roleSwitch = document.querySelector(".role-switch-bar");
-  if (roleSwitch) roleSwitch.hidden = !isLocalTestingMode();
+  if (roleSwitch) roleSwitch.hidden = !isLocalTestingMode() || platformContext.enabled;
+}
+
+async function platformRequest(path, options = {}) {
+  if (!platformContext.enabled) throw new Error("Platform API is not configured.");
+  const headers = new Headers(options.headers || {});
+  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const response = await fetch(`${PLATFORM_API_BASE}${path}`, {
+    ...options,
+    headers,
+    credentials: "include"
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || "Server pozadavek odmitl.");
+    error.code = body?.error?.code || "request_failed";
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+function platformRole(role = "player") {
+  if (["admin", "manager"].includes(role)) return "admin";
+  if (role === "stringer") return "stringer";
+  if (role === "seller") return "seller";
+  return "player";
+}
+
+function isPrimaryClubAdmin() {
+  return state.role === "admin" && (!platformContext.enabled || platformContext.role === "admin");
+}
+
+function adminHeaderLabel() {
+  return isPrimaryClubAdmin() ? "Hlavni spravce" : "Spravce klubu";
+}
+
+function versionedAssetUrl(url = "") {
+  if (!/^assets\//i.test(url)) return url;
+  return `${url.split("?", 1)[0]}?v=${DEMO_VERSION}`;
+}
+
+function applyPlatformWallet(wallet, playerId = currentPersonaId()) {
+  const player = playerRecordById(playerId);
+  if (!player || !wallet?.balance) return;
+  player.paidCredit = Number(wallet.balance.paidMinor || 0) / 100;
+  player.bonusCredit = Number(wallet.balance.bonusMinor || 0) / 100;
+  player.credit = Number(wallet.balance.totalMinor || 0) / 100;
+  if (playerId === currentPersonaId()) setCurrentPersona(playerId);
+
+  const imported = (wallet.history || []).map((item) => ({
+    id: item.id,
+    playerId,
+    type: item.transaction_type,
+    paid: Number(item.paid_delta_minor || 0) / 100,
+    bonus: Number(item.bonus_delta_minor || 0) / 100,
+    total: (Number(item.paid_delta_minor || 0) + Number(item.bonus_delta_minor || 0)) / 100,
+    balanceAfter: (Number(item.paid_balance_after_minor || 0) + Number(item.bonus_balance_after_minor || 0)) / 100,
+    method: item.payment_method || "other",
+    note: item.note || "",
+    createdBy: "Spravce",
+    createdAt: item.created_at
+  }));
+  creditTransactions.splice(0, creditTransactions.length,
+    ...creditTransactions.filter((item) => item.playerId !== playerId),
+    ...imported
+  );
+}
+
+function platformPersonaByMembership(membershipId = "") {
+  for (const [personaId, memberId] of platformContext.membersByPersona.entries()) {
+    if (memberId === membershipId) return personaId;
+  }
+  return "";
+}
+
+function platformSurface(surface = "other") {
+  if (surface === "clay") return "Antuka";
+  if (surface === "grass") return "Trava";
+  if (surface === "hard") return "Umele";
+  if (surface === "carpet") return "Koberec";
+  return "Jiny";
+}
+
+function platformSurfaceCode(surface = "Jiny") {
+  if (surface === "Antuka") return "clay";
+  if (surface === "Trava") return "grass";
+  if (surface === "Umele") return "hard";
+  if (surface === "Koberec") return "carpet";
+  return "other";
+}
+
+function platformPriceDayLabel(dayKey = "all") {
+  if (dayKey === "weekdays") return "Po-Pa";
+  if (dayKey === "weekend") return "So-Ne";
+  if (dayKey.startsWith("date:")) return "Dnes";
+  return "Po-Ne";
+}
+
+function platformPriceDayKey(label = "Po-Ne") {
+  if (label === "Po-Pa") return "weekdays";
+  if (label === "So-Ne") return "weekend";
+  if (label === "Dnes") return `date:${selectedBookingIsoDate()}`;
+  return "all";
+}
+
+function ensurePlatformDirectoryPlayer(member) {
+  let player = adminPlayerDirectory.find((item) => item.name.toLowerCase() === member.displayName.toLowerCase());
+  if (!player) {
+    player = {
+      id: slugifyPlayerId(member.displayName),
+      name: member.displayName,
+      initials: initialsFromName(member.displayName),
+      relation: "club",
+      gender: "male",
+      email: member.email || "",
+      accountType: member.accountType || "club",
+      accountLabel: member.accountType === "guest" ? "Host" : member.accountType === "credit" ? "Kreditovy hrac" : "Klubovy hrac",
+      age: null,
+      credit: 0,
+      paidCredit: 0,
+      bonusCredit: 0,
+      discount: 0,
+      baseDiscount: 0,
+      loyaltyDiscount: 0,
+      playedHours: 0,
+      nextLoyaltyHours: 50,
+      discountReason: "",
+      seasonSpend: 0,
+      seasonReservations: 0,
+      adminNote: "",
+      invitedBy: "",
+      level: "nezadano",
+      type: "nezadano",
+      time: "",
+      reservationNeed: "",
+      style: "nezadano",
+      tournaments: "zadne",
+      lastPlayed: "Zatim bez historie.",
+      record: "0 zapasu"
+    };
+    adminPlayerDirectory.push(player);
+    players.push(player);
+  }
+  if (member.email) player.email = member.email;
+  player.clubRole = member.role || "player";
+  if (member.accountType) {
+    player.accountType = member.accountType;
+    player.accountLabel = member.accountType === "guest" ? "Host" : member.accountType === "credit" ? "Kreditovy hrac" : "Klubovy hrac";
+  }
+  if (Number.isFinite(member.baseDiscountPct)) player.baseDiscount = Number(member.baseDiscountPct);
+  if (Number.isFinite(member.loyaltyDiscountPct)) player.loyaltyDiscount = Number(member.loyaltyDiscountPct);
+  player.discount = Number(player.baseDiscount || 0) + Number(player.loyaltyDiscount || 0);
+  if (member.discountReason) player.discountReason = member.discountReason;
+  if (member.adminNote) player.adminNote = member.adminNote;
+  return player;
+}
+
+function platformAttendance(participant) {
+  const playerId = platformPersonaByMembership(participant.membershipId) || playerIdByDisplayName(participant.displayName);
+  const record = playerRecordById(playerId);
+  const status = participant.status === "owner" ? "active" : participant.status;
+  const roles = {
+    owner: "vytvoril rezervaci",
+    pending: "ceka na potvrzeni",
+    confirmed: "potvrdil",
+    replacement: "potvrzeny nahradnik",
+    declined: "odmitl"
+  };
+  return {
+    name: participant.displayName,
+    initials: record?.initials || participant.displayName.slice(0, 2).toUpperCase(),
+    playerId,
+    gender: record?.gender || (["handa", "viki"].includes(playerId) ? "female" : "male"),
+    status,
+    role: roles[participant.status] || participant.status
+  };
+}
+
+async function refreshPlatformReservations(daysAhead = 14) {
+  if (!platformContext.enabled || !platformContext.clubId) return false;
+  const dates = Array.from({ length: daysAhead }, (_, index) => {
+    const date = new Date(appToday);
+    date.setDate(date.getDate() + index);
+    return dateToIso(date);
+  });
+  const [mine, notices, schedule] = await Promise.all([
+    platformRequest(`/api/v2/clubs/${platformContext.clubId}/me/reservations`),
+    platformRequest(`/api/v2/clubs/${platformContext.clubId}/me/notifications`),
+    platformRequest(`/api/v2/clubs/${platformContext.clubId}/schedule?from=${dates[0]}&days=${daysAhead}`)
+  ]);
+
+  const mappedCourts = (schedule.courts || []).map((item) => ({
+    id: item.id,
+    name: item.name,
+    surface: platformSurface(item.surface),
+    surfaceClass: courtSurfaceClass(platformSurface(item.surface)),
+    color: item.color,
+    photo: item.photoUrl || courtPhoto,
+    openTime: item.openTime,
+    closeTime: item.closeTime,
+    reservations: []
+  }));
+  replaceArray(courts, mappedCourts);
+  replaceArray(courtPriceRules, (schedule.priceRules || []).map((rule) => ({
+    id: rule.id,
+    court: rule.courtId,
+    days: platformPriceDayLabel(rule.dayKey),
+    dayKey: rule.dayKey,
+    start: rule.start,
+    end: rule.end,
+    price: Number(rule.priceMinor || 0) / 100
+  })));
+  if (mappedCourts[0]) {
+    club.open = mappedCourts[0].openTime || club.open;
+    club.close = mappedCourts[0].closeTime || club.close;
+  }
+
+  const mappedMine = (mine.reservations || []).map((item) => {
+    const date = dateFromIso(item.date) || appToday;
+    const court = courts.find((entry) => entry.id === item.courtId) || courts[0];
+    const attendance = (item.participants || []).map(platformAttendance);
+    return {
+      id: item.id,
+      eventType: item.eventType,
+      isoDate: item.date,
+      day: weekdayCodes[date.getDay()],
+      date: String(date.getDate()),
+      start: item.start,
+      end: item.end,
+      kind: item.seriesId ? "Trvala" : "Jednorazova",
+      seriesId: item.seriesId || "",
+      gameType: item.gameType,
+      status: item.status,
+      title: item.title || "",
+      ownerMembershipId: item.ownerMembershipId,
+      participantStatus: item.participantStatus,
+      court,
+      players: attendance.map((player) => player.name),
+      attendance
+    };
+  });
+  replaceArray(personalReservations, mappedMine.filter((item) => !(item.title === "Navrh hry" && item.status === "pending")));
+  replaceArray(gameProposals, (mine.reservations || []).filter((item) => item.title === "Navrh hry" && item.status === "pending").map((item) => {
+    const date = dateFromIso(item.date) || appToday;
+    const ownerId = platformPersonaByMembership(item.ownerMembershipId);
+    const sentTo = (item.participants || []).filter((participant) => participant.membershipId !== item.ownerMembershipId).map((participant) => {
+      const playerId = platformPersonaByMembership(participant.membershipId);
+      const player = playerRecordById(playerId);
+      return {
+        name: participant.displayName,
+        initials: player?.initials || participant.displayName.slice(0, 2).toUpperCase(),
+        playerId,
+        status: participant.status
+      };
+    });
+    const confirmed = 1 + sentTo.filter((player) => ["confirmed", "replacement"].includes(player.status)).length;
+    const target = item.gameType === "single" ? 2 : 4;
+    return {
+      id: item.id,
+      ownerId,
+      gameType: item.gameType,
+      isoDate: item.date,
+      title: `${formatPortalDate(date)} ${item.start}-${item.end}`,
+      court: `${courts.find((court) => court.id === item.courtId)?.name || item.courtName} · ${platformSurface(item.surface)}`,
+      sentTo,
+      state: confirmed >= target ? "Sestava potvrzena" : `Potvrzeno ${confirmed}/${target}`,
+      note: item.gameType === "single" ? "Single potrebuje 2 hrace." : "Double potrebuje 4 hrace."
+    };
+  }));
+
+  const allDailyReservations = [];
+  (schedule.courts || []).forEach((dayCourt) => {
+      const court = courts.find((item) => item.id === dayCourt.id);
+      if (!court) return;
+      (dayCourt.reservations || []).forEach((reservation) => {
+        const linked = personalReservations.find((item) => item.id === reservation.id);
+        const type = reservation.kind === "block"
+          ? "special"
+          : reservation.invitationPending || (reservation.isMine && reservation.status === "pending")
+          ? "pending"
+          : reservation.isMine
+            ? "mine"
+            : reservation.status === "searching"
+              ? "group"
+              : "busy";
+        court.reservations.push({
+          isoDate: reservation.date,
+          start: reservation.start,
+          end: reservation.end,
+          title: reservation.kind === "block" ? reservation.title : reservation.status === "searching" ? "Hleda spoluhrace" : reservation.gameType === "single" ? "Dvouhra" : "Ctyrhra",
+          type,
+          specialType: reservation.blockType,
+          note: reservation.note,
+          color: reservation.color,
+          reservationId: reservation.id,
+          players: linked?.players || []
+        });
+        allDailyReservations.push({ ...reservation, court: dayCourt });
+      });
+  });
+  courts.forEach((court) => court.reservations.sort((left, right) => String(left.isoDate).localeCompare(String(right.isoDate)) || timeToMinutes(left.start) - timeToMinutes(right.start)));
+  replaceArray(adminReservations, allDailyReservations.map((item) => ({
+    time: `${formatPortalDate(dateFromIso(item.date))} ${item.start}-${item.end}`,
+    court: item.court.name,
+    surface: platformSurface(item.court.surface),
+    owner: item.kind === "block" ? item.title : item.ownerName || "Clen klubu",
+    status: item.kind === "block" ? "Specialni blokace" : item.status === "confirmed" ? "Potvrzeno" : item.status === "searching" ? "Hleda hrace" : "Ceka na potvrzeni",
+    players: item.kind === "block" ? item.blockType : `${item.activePlayers}/${item.targetPlayers}`,
+    tone: item.kind === "block" ? "info" : item.status === "confirmed" ? "good" : "warn",
+    kind: item.kind || "reservation",
+    reservationId: item.id
+  })));
+
+  replaceArray(notifications, (notices.notifications || []).map((item) => ({
+    id: item.id,
+    serverNotificationId: item.id,
+    type: item.type === "reservation_invite" ? "booking-invite" : item.type === "replacement_invite" ? "replacement-invite" : item.type === "replacement_vote" ? "replacement-vote" : item.type === "game_counterproposal" ? "counterproposal" : ["poll_opened", "poll_reminder"].includes(item.type) ? "poll" : item.type === "tournament_opened" ? "event-announcement" : item.type === "credit_topup" ? "credit" : item.type === "event_announcement" ? "event-announcement" : item.type === "event_cancelled" ? "event-cancelled" : item.type === "friend_request" ? "friend-request" : item.type === "friend_accepted" ? "friend-accepted" : item.type === "order_ready" ? "order-ready" : item.type,
+    recipients: [currentPersonaId()],
+    title: item.title,
+    meta: item.body,
+    status: item.type === "reservation_invite" ? "Ceka na potvrzeni" : "Nove",
+    reservationId: item.entity_type === "reservation" ? item.entity_id : undefined,
+    candidateMembershipId: item.type === "replacement_vote" ? item.actor_membership_id : undefined,
+    eventId: item.entity_type === "event" ? item.entity_id : undefined,
+    friendRequestId: item.entity_type === "friend_request" ? item.entity_id : undefined,
+    orderId: item.entity_type === "order" ? item.entity_id : undefined,
+    counterproposalId: item.entity_type === "counterproposal" ? item.entity_id : undefined,
+    pollId: item.entity_type === "poll" ? item.entity_id : undefined,
+    tournamentId: item.entity_type === "tournament" ? item.entity_id : undefined,
+    requestFrom: item.entity_type === "friend_request" ? platformPersonaByMembership(item.actor_membership_id) : undefined,
+    createdAt: item.created_at
+  })));
+  platformContext.loadedDates = new Set(dates);
+  return true;
+}
+
+function applyPlatformEvents(payload) {
+  const mapped = (payload?.events || []).map((item) => {
+    const date = dateFromIso(item.date) || appToday;
+    const thumbnail = item.imageUrl || (item.eventType === "tournament" ? "singles" : item.eventType === "demo" ? "rackets" : "shop");
+    return {
+      id: item.id,
+      isoDate: item.date,
+      startTime: item.start,
+      endTime: item.end,
+      thumbnail,
+      status: item.status,
+      date: weekdayCodes[date.getDay()] || "Akce",
+      title: item.title,
+      meta: `${formatPortalDate(date)} ${item.start}-${item.end}`,
+      detail: item.detail,
+      fee: item.feeLabel,
+      capacity: item.capacity,
+      registered: (item.registrations || []).map((registration) => registration.displayName),
+      history: "",
+      cancelReason: item.cancellationReason || "",
+      isRegistered: Boolean(item.isRegistered)
+    };
+  });
+  replaceArray(events, mapped);
+  const playerId = currentPersonaId();
+  state.joinedEventsByPlayer[playerId] = mapped.filter((event) => event.isRegistered).map((event) => event.id);
+  state.joinedEvents = new Set(state.joinedEventsByPlayer[playerId]);
+}
+
+async function refreshPlatformEvents() {
+  if (!platformContext.enabled || !platformContext.clubId) return false;
+  applyPlatformEvents(await platformRequest(`/api/v2/clubs/${platformContext.clubId}/events`));
+  return true;
+}
+
+function applyPlatformRelationships(payload) {
+  replaceArray(friendships, (payload?.friendships || []).map((item) => ({
+    id: item.id,
+    players: (item.membershipIds || []).map(platformPersonaByMembership).filter(Boolean),
+    createdAt: item.createdAt
+  })).filter((item) => item.players.length === 2));
+  replaceArray(friendRequests, (payload?.requests || []).map((item) => ({
+    id: item.id,
+    from: platformPersonaByMembership(item.requesterMembershipId),
+    to: platformPersonaByMembership(item.recipientMembershipId),
+    status: item.status,
+    createdAt: item.createdAt
+  })).filter((item) => item.from && item.to));
+}
+
+async function refreshPlatformRelationships() {
+  if (!platformContext.enabled || !platformContext.clubId) return false;
+  applyPlatformRelationships(await platformRequest(`/api/v2/clubs/${platformContext.clubId}/relationships`));
+  return true;
+}
+
+function platformOrderStatus(status = "new") {
+  return ({
+    new: "nova objednavka",
+    checking: "overit dostupnost",
+    ordered: "objednano u dodavatele",
+    preparing: "pripravuje se na klubu",
+    ready: "vyrizena spravcem - pripravena",
+    completed: "predano hraci",
+    cancelled: "zruseno"
+  })[status] || status;
+}
+
+function applyPlatformOrders(payload) {
+  replaceArray(playerOrders, (payload?.orders || []).map((item) => {
+    const playerId = platformPersonaByMembership(item.membershipId);
+    const reservation = item.reservationDate ? `${formatPortalDate(dateFromIso(item.reservationDate))} ${item.reservationStart || ""}` : "";
+    return {
+      id: item.id,
+      player: item.displayName,
+      playerId,
+      product: item.productName,
+      type: item.productType === "service" ? "sluzba" : item.productType === "demo" ? "demo" : "zbozi",
+      status: platformOrderStatus(item.status),
+      serverStatus: item.status,
+      reservation: item.deliveryMode === "reservation" ? reservation : item.deliveryMode === "event" ? item.eventTitle : item.pickupDate,
+      reservationId: item.reservationId,
+      deliveryMode: item.deliveryMode,
+      pickupDate: item.pickupDate || "",
+      eventId: item.eventId || "",
+      eventTitle: item.eventTitle || "",
+      source: item.source,
+      sourceLabel: item.source === "stock" ? "ze skladu klubu" : item.source === "supplier" ? "objednat od dodavatele" : item.source === "check" ? "overit dostupnost" : "spravce jeste nerozhodl",
+      batch: item.deliveryMode === "reservation" ? "nachystat k rezervaci" : item.deliveryMode === "event" ? "pridat do akce / demo baliku" : "nachystat na klub",
+      value: Number(item.amountMinor || 0) / 100,
+      note: item.note || "bez poznamky"
+    };
+  }));
+}
+
+async function refreshPlatformOrders() {
+  if (!platformContext.enabled || !platformContext.clubId) return false;
+  const endpoint = state.role === "player" ? "me/orders" : "orders";
+  applyPlatformOrders(await platformRequest(`/api/v2/clubs/${platformContext.clubId}/${endpoint}`));
+  return true;
+}
+
+const stringingStatusLabels = {
+  waiting_dropoff: "ceka na predani rakety klubu",
+  at_club: "raketa je prijata na klubu",
+  with_stringer: "raketa je u vypletace",
+  returned_to_club: "vypletac vratil raketu klubu",
+  ready_for_pickup: "pripravena na recepci",
+  delivered: "predana hraci klubem",
+  cancelled: "zruseno"
+};
+
+function applyPlatformStringing(payload) {
+  replaceArray(stringingOrders, (payload?.jobs || []).map((item) => {
+    const reservation = item.reservationDate
+      ? `${formatPortalDate(dateFromIso(item.reservationDate))}${item.reservationStart ? ` v ${item.reservationStart}` : ""}`
+      : "pred pristi hrou";
+    return {
+      id: item.id,
+      orderId: item.orderId,
+      player: item.playerName,
+      playerId: platformPersonaByMembership(item.playerMembershipId),
+      racket: item.racketLabel,
+      string: item.stringName,
+      tension: item.tension,
+      status: item.status,
+      statusLabel: stringingStatusLabels[item.status] || item.status,
+      reservation,
+      reservationId: item.reservationId,
+      handoff: item.status === "with_stringer" ? "u vypletace" : item.status === "delivered" ? "predano hraci" : "pres recepci klubu",
+      due: reservation,
+      note: item.staffNote || item.playerNote || "bez poznamky",
+      message: item.status === "ready_for_pickup" ? stringingReadyMessage({ reservation }) : ""
+    };
+  }));
+}
+
+async function refreshPlatformStringing() {
+  if (!platformContext.enabled || !platformContext.clubId) return false;
+  const endpoint = state.role === "player" ? "me/stringing-jobs" : "stringing-jobs";
+  applyPlatformStringing(await platformRequest(`/api/v2/clubs/${platformContext.clubId}/${endpoint}`));
+  return true;
+}
+
+function applyPlatformPolls(payload) {
+  replaceArray(clubPolls, (payload?.polls || []).map((poll) => ({
+    id: poll.id,
+    title: poll.title,
+    question: poll.question,
+    status: poll.status,
+    start: "klubova anketa",
+    end: formatPortalDate(dateFromIso(poll.endsAt), false),
+    endsAt: poll.endsAt,
+    reminder: "Pripominka prijde pouze hracum, kteri jeste nehlasovali.",
+    supplierNote: "Po uzavreni spravce pripravi navazujici akci pro obchodnika.",
+    cadence: "Vysledek zustava spravci jako podklad pro akci.",
+    options: (poll.options || []).map((option) => ({
+      id: option.id,
+      label: option.label,
+      category: option.category === "shoes" ? "boty" : option.category === "clothing" ? "obleceni" : option.category === "rackets" ? "rakety" : "ostatni",
+      votes: Array.from({ length: Number(option.voteCount || 0) }, (_, index) => poll.myOptionId === option.id && index === 0 ? currentPersonaId() : `hlas-${poll.id}-${option.id}-${index}`),
+      weighted: Number(option.weighted || 0),
+      logistics: option.logisticsNote
+    }))
+  })));
+}
+
+async function refreshPlatformPolls() {
+  if (!platformContext.enabled || !platformContext.clubId) return false;
+  applyPlatformPolls(await platformRequest(`/api/v2/clubs/${platformContext.clubId}/polls`));
+  return true;
+}
+
+function applyPlatformTournaments(payload) {
+  const mapped = (payload?.tournaments || []).map((item) => {
+    const matches = (item.matches || []).map((match) => ({
+      id: match.id,
+      stage: match.stage,
+      group: match.group || "",
+      court: match.court || "bez kurtu",
+      time: match.start || "",
+      playerA: match.playerA || "volny los",
+      playerB: match.playerB || "volny los",
+      playerAMembershipId: match.playerAMembershipId,
+      playerBMembershipId: match.playerBMembershipId,
+      winnerMembershipId: match.winnerMembershipId,
+      teamAId: match.teamAId,
+      teamBId: match.teamBId,
+      winnerTeamId: match.winnerTeamId,
+      winner: match.winner || "",
+      score: match.score || ""
+    }));
+    const groups = (item.groups || []).map((group) => ({
+      name: group.name,
+      players: item.type === "double" ? (group.teams || []).map((team) => team.name) : (group.players || []).map((player) => player.displayName),
+      table: (item.type === "double" ? (group.teams || []).map((team) => ({ membershipId: team.id, displayName: team.name, team: true })) : (group.players || [])).map((player) => {
+        const played = matches.filter((match) => match.group === group.name && [match.playerA, match.playerB].includes(player.displayName) && match.score);
+        const wins = played.filter((match) => player.team ? match.winnerTeamId === player.membershipId : match.winnerMembershipId === player.membershipId).length;
+        return { player: player.displayName, points: wins * 2, wins, losses: played.length - wins, score: `${wins}:${played.length - wins}` };
+      }).sort((left, right) => right.points - left.points || right.wins - left.wins)
+    }));
+    return {
+      id: item.id,
+      title: item.title,
+      type: item.type,
+      status: item.status,
+      date: `${formatPortalDate(dateFromIso(item.date))} ${item.start}`,
+      isoDate: item.date,
+      startTime: item.start,
+      deadline: `${formatPortalDate(dateFromIso(item.deadline?.slice(0, 10)))} ${item.deadline?.slice(11) || ""}`,
+      deadlineIso: item.deadline,
+      courts: (item.courtIds || []).map((id) => courts.find((court) => court.id === id)?.name || id),
+      courtIds: item.courtIds || [],
+      maxPlayers: Number(item.maxParticipants || 16),
+      entryFee: item.entryFeeLabel,
+      rules: item.rules,
+      participants: (item.participants || []).map((participant) => participant.displayName),
+      participantRows: item.participants || [],
+      teams: item.teams || [],
+      isRegistered: Boolean(item.isRegistered),
+      groups,
+      matches,
+      knockout: matches.filter((match) => match.stage !== "group"),
+      history: item.status === "completed" ? `Archiv: ${item.title}, ${item.participants?.length || 0} hracu.` : ""
+    };
+  });
+  replaceArray(tournaments, mapped);
+}
+
+async function refreshPlatformTournaments() {
+  if (!platformContext.enabled || !platformContext.clubId) return false;
+  applyPlatformTournaments(await platformRequest(`/api/v2/clubs/${platformContext.clubId}/tournaments`));
+  return true;
+}
+
+function applyPlatformSupplierRequests(payload) {
+  (payload?.requests || []).forEach((request) => {
+    let event = events.find((item) => item.id === request.eventId);
+    if (!event) {
+      event = {
+        id: request.eventId,
+        isoDate: request.date,
+        startTime: request.start,
+        endTime: request.end,
+        thumbnail: request.imageUrl || "rackets",
+        date: weekdayCodes[(dateFromIso(request.date) || appToday).getDay()] || "Akce",
+        title: request.title,
+        meta: `${formatPortalDate(dateFromIso(request.date))} ${request.start}-${request.end}`,
+        detail: request.detail,
+        fee: request.feeLabel,
+        registered: [],
+        history: `Vysledek ankety: ${request.winningOption || request.requestedItems}.`
+      };
+      events.unshift(event);
+    }
+    event.sourcePollId = request.pollId;
+    event.supplierRequestId = request.id;
+    event.requestedDate = `${formatPortalDate(dateFromIso(request.date))} ${request.start}-${request.end}`;
+    event.sellerDelivery = request.sellerItems || "";
+    event.sellerNote = request.sellerNote || "";
+    event.sellerStatus = request.status === "confirmed" ? "obchodnik potvrdil termin a dodavku" : request.status === "published" ? "publikovano hracum" : request.status === "declined" ? "obchodnik termin odmitl" : "ceka na potvrzeni obchodnika";
+    event.status = request.status === "confirmed" ? "seller_confirmed" : request.status === "published" ? "published" : request.status === "declined" ? "seller_counterproposal" : "waiting_for_seller";
+  });
+}
+
+async function refreshPlatformSupplierRequests() {
+  if (!platformContext.enabled || !platformContext.clubId || !["admin", "seller"].includes(state.role)) return false;
+  applyPlatformSupplierRequests(await platformRequest(`/api/v2/clubs/${platformContext.clubId}/supplier-requests`));
+  return true;
+}
+
+function applyPlatformReservationSeries(payload) {
+  replaceArray(reservationSeries, (payload?.series || []).map((item) => ({
+    id: item.id,
+    courtId: item.courtId,
+    courtName: item.courtName,
+    ownerMembershipId: item.ownerMembershipId,
+    ownerName: item.ownerName,
+    startDate: item.startDate,
+    endDate: item.endDate,
+    start: item.start,
+    end: item.end,
+    gameType: item.gameType,
+    title: item.title || "Trvala rezervace",
+    status: item.status,
+    occurrenceCount: Number(item.occurrenceCount || 0)
+  })));
+}
+
+async function refreshPlatformReservationSeries() {
+  if (!platformContext.enabled || !platformContext.clubId || state.role !== "admin") return false;
+  applyPlatformReservationSeries(await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservation-series`));
+  return true;
+}
+
+async function loadPlatformContext() {
+  const [me, memberships] = await Promise.all([
+    platformRequest("/api/v2/me"),
+    platformRequest("/api/v2/me/clubs")
+  ]);
+  platformContext.clubs = memberships.clubs || [];
+  let selectedClubId = "";
+  try { selectedClubId = localStorage.getItem(SELECTED_CLUB_KEY) || ""; } catch (_) {}
+  const membership = platformContext.clubs.find((item) => item.clubId === selectedClubId) || platformContext.clubs[0];
+  if (!membership) throw new Error("Ucet nema pristup k zadnemu klubu.");
+
+  platformContext.clubId = membership.clubId;
+  platformContext.membershipId = membership.membershipId;
+  platformContext.userId = me.user.id;
+  platformContext.email = me.user.email;
+  platformContext.role = membership.role;
+  state.role = platformRole(membership.role);
+  state.view = "home";
+
+  const account = accountByEmail(me.user.email);
+  if (account?.persona) setCurrentPersona(account.persona);
+  else {
+    const player = adminPlayerDirectory.find((item) => item.name.toLowerCase() === me.user.displayName.toLowerCase());
+    if (player) setCurrentPersona(player.id);
+  }
+
+  club.name = membership.name;
+  if (membership.logoUrl) club.logoUrl = versionedAssetUrl(membership.logoUrl);
+
+  try { localStorage.setItem(SELECTED_CLUB_KEY, membership.clubId); } catch (_) {}
+  const requests = [
+    platformRequest(`/api/v2/clubs/${membership.clubId}/credit-rules`),
+    platformRequest(`/api/v2/clubs/${membership.clubId}/me/credit`),
+    platformRequest(`/api/v2/clubs/${membership.clubId}/${state.role === "admin" ? "members" : "directory"}`),
+    platformRequest(`/api/v2/clubs/${membership.clubId}/events`),
+    platformRequest(`/api/v2/clubs/${membership.clubId}/relationships`),
+    platformRequest(`/api/v2/clubs/${membership.clubId}/${state.role === "player" ? "me/orders" : "orders"}`),
+    ["player", "admin", "stringer"].includes(state.role)
+      ? platformRequest(`/api/v2/clubs/${membership.clubId}/${state.role === "player" ? "me/stringing-jobs" : "stringing-jobs"}`)
+      : Promise.resolve({ jobs: [] }),
+    platformRequest(`/api/v2/clubs/${membership.clubId}/polls`),
+    platformRequest(`/api/v2/clubs/${membership.clubId}/tournaments`),
+    ["admin", "seller"].includes(state.role) ? platformRequest(`/api/v2/clubs/${membership.clubId}/supplier-requests`) : Promise.resolve({ requests: [] }),
+    state.role === "admin" ? platformRequest(`/api/v2/clubs/${membership.clubId}/reservation-series`) : Promise.resolve({ series: [] }),
+    platformRequest(`/api/v2/me/agenda?from=${dateToIso(appToday)}`),
+    state.role === "admin" ? platformRequest(`/api/v2/clubs/${membership.clubId}/analytics?from=${dateToIso(new Date(appToday.getFullYear(), appToday.getMonth() - 5, 1))}&to=${dateToIso(new Date(appToday.getFullYear(), appToday.getMonth() + 1, 0))}`) : Promise.resolve(null),
+    platformRequest(`/api/v2/clubs/${membership.clubId}/${state.role === "player" ? "me/charges" : "charges"}`).catch(() => ({ charges: [] })),
+    platformRequest("/api/v2/me/privacy").catch(() => platformPrivacy),
+    platformRequest("/api/v2/me/notification-preferences").catch(() => ({ preferences: {} })),
+    platformRequest("/api/v2/me/connections").catch(() => platformConnections),
+    platformRequest(`/api/v2/clubs/${membership.clubId}/context`)
+  ];
+  const [rules, wallet, members, eventPayload, relationshipPayload, orderPayload, stringingPayload, pollPayload, tournamentPayload, supplierPayload, seriesPayload, agendaPayload, analyticsPayload, chargePayload, privacyPayload, notificationPreferencePayload, connectionPayload, clubContextPayload] = await Promise.all(requests);
+  replaceArray(creditBonusRules, (rules.rules || []).map((rule) => ({
+    id: rule.id,
+    name: rule.label,
+    paid: Number(rule.thresholdMinor || 0) / 100,
+    bonus: Number(rule.bonusMinor || 0) / 100,
+    note: rule.note || "Bonus podle pravidel klubu."
+  })));
+  if (state.role === "player") applyPlatformWallet(wallet);
+
+  platformContext.membersByPersona.clear();
+  (members?.members || []).forEach((member) => {
+    const player = ensurePlatformDirectoryPlayer(member);
+    if (player) platformContext.membersByPersona.set(player.id, member.membershipId);
+  });
+  if (!account?.persona) {
+    const player = adminPlayerDirectory.find((item) => item.name.toLowerCase() === me.user.displayName.toLowerCase());
+    if (player) setCurrentPersona(player.id);
+  }
+  applyPlatformEvents(eventPayload);
+  applyPlatformRelationships(relationshipPayload);
+  applyPlatformOrders(orderPayload);
+  applyPlatformStringing(stringingPayload);
+  applyPlatformPolls(pollPayload);
+  applyPlatformTournaments(tournamentPayload);
+  applyPlatformSupplierRequests(supplierPayload);
+  applyPlatformReservationSeries(seriesPayload);
+  platformAgenda = { reservations: agendaPayload.reservations || [], events: agendaPayload.events || [] };
+  platformAnalytics = analyticsPayload;
+  platformCharges = chargePayload.charges || [];
+  adminPayments.splice(0, adminPayments.length, ...platformCharges.map((charge) => ({ id: charge.id, player: charge.player || currentUser.name, item: `${charge.court_name} · ${charge.reservation_date} ${charge.start_time}-${charge.end_time}`, amount: formatMoney(Number(charge.final_minor || 0) / 100), status: charge.status, reservationId: charge.reservation_id })));
+  platformPrivacy = privacyPayload;
+  platformNotificationPreferences = notificationPreferencePayload.preferences || {};
+  platformConnections = connectionPayload;
+  platformModules = clubContextPayload.modules || [];
+  await refreshPlatformReservations();
+  saveLoginSession({ email: me.user.email, role: state.role, persona: state.persona });
+  applyClubBranding();
+  return true;
+}
+
+async function syncPlatformLiveData({ silent = true } = {}) {
+  if (!platformContext.enabled || !platformContext.clubId || platformSyncInFlight || document.hidden) return false;
+  platformSyncInFlight = true;
+  const previousNoticeCount = visibleNotifications().length;
+  try {
+    const tasks = [
+      refreshPlatformReservations(),
+      refreshPlatformEvents(),
+      refreshPlatformRelationships(),
+      refreshPlatformOrders(),
+      refreshPlatformPolls(),
+      refreshPlatformTournaments()
+    ];
+    if (["admin", "stringer"].includes(state.role)) tasks.push(refreshPlatformStringing());
+    if (["admin", "seller"].includes(state.role)) tasks.push(refreshPlatformSupplierRequests());
+    if (state.role === "admin") tasks.push(refreshPlatformReservationSeries());
+    if (state.role === "player") {
+      tasks.push(platformRequest(`/api/v2/clubs/${platformContext.clubId}/me/credit`).then((wallet) => applyPlatformWallet(wallet)));
+    }
+    await Promise.all(tasks);
+    render();
+    if (!silent && visibleNotifications().length > previousNoticeCount) showToast("Dorazila nova zprava v portalu.");
+    return true;
+  } catch (error) {
+    if (error?.status === 401) {
+      await completeLogout();
+      render();
+      if (!loginPromptShown) {
+        loginPromptShown = true;
+        openModal("login");
+      }
+    }
+    return false;
+  } finally {
+    platformSyncInFlight = false;
+  }
+}
+
+function startPlatformSync() {
+  if (!platformContext.enabled || platformSyncTimer) return;
+  platformSyncTimer = window.setInterval(() => {
+    if (!document.hidden) syncPlatformLiveData({ silent: false });
+  }, 60000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) syncPlatformLiveData({ silent: false });
+  });
+  window.addEventListener("focus", () => syncPlatformLiveData({ silent: false }));
+  window.addEventListener("online", () => syncPlatformLiveData({ silent: false }));
 }
 
 function replaceArray(target, source) {
@@ -770,8 +1936,15 @@ async function optimizeImage(file, kind = "photo") {
 }
 
 async function uploadImageFile(file, kind, targetId) {
-  if (!API_BASE) throw new Error("Shared API is not configured");
   const image = await optimizeImage(file, kind);
+  if (platformContext.enabled) {
+    const query = new URLSearchParams({ clubId: platformContext.clubId, entityType: kind, entityId: String(targetId || "new") });
+    const response = await fetch(`${PLATFORM_API_BASE}/api/v2/media?${query}`, { method: "POST", headers: { "Content-Type": "image/webp" }, body: image, credentials: "include" });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.asset?.url) throw new Error(result?.error?.message || "Image upload failed");
+    return `${PLATFORM_API_BASE}${result.asset.url}`;
+  }
+  if (!API_BASE) throw new Error("Shared API is not configured");
   const safeTarget = String(targetId || "new").replace(/[^a-zA-Z0-9_-]/g, "-");
   const unique = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const key = `${kind}/${safeTarget}/${unique}.webp`;
@@ -839,12 +2012,15 @@ async function handleImageUpload(input) {
 function portalStatePayload() {
   return {
     version: DEMO_VERSION,
+    clientUpdatedAt: stateRevisionAt,
     club,
     courts,
     events,
     courtPriceRules,
     adminReservations,
     playerOrders,
+    creditBonusRules,
+    creditTransactions,
     stringingOrders,
     clubPolls,
     tournaments,
@@ -913,7 +2089,7 @@ function mergeConcurrentState(remoteState, localState, baseState) {
   if (!baseState) return cloneData(localState);
   const merged = cloneData(remoteState);
   const entityCollections = [
-    "events", "adminReservations", "playerOrders", "stringingOrders", "clubPolls",
+    "events", "adminReservations", "playerOrders", "stringingOrders", "clubPolls", "creditBonusRules", "creditTransactions",
     "tournaments", "players", "guestProfiles", "notifications", "friendships", "friendRequests",
     "gameProposals", "personalReservations"
   ];
@@ -945,7 +2121,7 @@ function migrateDateFields() {
       const linked = slot.reservationId ? personalReservations.find((reservation) => reservation.id === slot.reservationId) : null;
       if (linked?.isoDate) slot.isoDate = linked.isoDate;
       else if (typeof slot.day === "number") slot.isoDate = dateToIso(dateForWeekIndex(slot.day));
-      else if (court.id === "c1" && slot.title === "Patecni double") slot.isoDate = "2026-06-19";
+      else if (court.id === "c1" && slot.title === "Patecni double") slot.isoDate = seedFridayIso;
     });
   });
   personalReservations.forEach((reservation) => {
@@ -976,12 +2152,18 @@ function migrateDateFields() {
 function applyStoredState(saved) {
   if (!saved || saved.version !== DEMO_VERSION) return false;
   suppressRemotePersist = true;
+  if (typeof saved.clientUpdatedAt === "string") stateRevisionAt = saved.clientUpdatedAt;
   if (saved.club) Object.assign(club, saved.club);
   replaceArray(courts, saved.courts);
   replaceArray(events, saved.events);
-  replaceArray(courtPriceRules, saved.courtPriceRules);
+  replaceArray(courtPriceRules, saved.courtPriceRules.map((rule, index) => ({
+    ...rule,
+    id: rule.id || `local-price-restored-${index}-${String(rule.court || "court")}`
+  })));
   replaceArray(adminReservations, saved.adminReservations);
   replaceArray(playerOrders, saved.playerOrders);
+  replaceArray(creditBonusRules, saved.creditBonusRules);
+  replaceArray(creditTransactions, saved.creditTransactions);
   replaceArray(stringingOrders, saved.stringingOrders);
   replaceArray(clubPolls, saved.clubPolls);
   replaceArray(tournaments, saved.tournaments);
@@ -994,7 +2176,10 @@ function applyStoredState(saved) {
   if (saved.joinedEventsByPlayer) state.joinedEventsByPlayer = saved.joinedEventsByPlayer;
   if (Array.isArray(saved.players)) {
     replaceArray(players, saved.players);
-    replaceArray(adminPlayerDirectory, saved.players);
+    replaceArray(adminPlayerDirectory, saved.players.map((player) => ({
+      ...player,
+      adminNote: visibleAdminNote(player)
+    })));
   }
   if (Array.isArray(saved.guestProfiles)) {
     saved.guestProfiles.forEach((savedGuest) => {
@@ -1032,6 +2217,7 @@ async function pushRemoteState(payload, baseUpdatedAt = remoteUpdatedAt, allowMe
 }
 
 function persistData() {
+  stateRevisionAt = new Date().toISOString();
   const payload = cloneData(portalStatePayload());
   lastLocalPersistAt = Date.now();
   try {
@@ -1054,6 +2240,11 @@ function persistData() {
 }
 
 async function hydrateStoredData() {
+  let localSaved = null;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+    if (parsed?.version === DEMO_VERSION) localSaved = parsed;
+  } catch (_) {}
   try {
     const response = await fetch(apiUrl("/api/state"), { cache: "no-store" });
     if (response.ok) {
@@ -1061,6 +2252,12 @@ async function hydrateStoredData() {
       sharedApiOnline = true;
       if (payload.updatedAt) remoteUpdatedAt = payload.updatedAt;
       if (payload.state) lastRemoteState = cloneData(payload.state);
+      const localIsNewer = localSaved?.clientUpdatedAt &&
+        (!payload.state?.clientUpdatedAt || localSaved.clientUpdatedAt > payload.state.clientUpdatedAt);
+      if (localIsNewer && applyStoredState(localSaved)) {
+        await pushRemoteState(localSaved, remoteUpdatedAt).catch(() => null);
+        return "local";
+      }
       if (payload.state && applyStoredState(payload.state)) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(portalStatePayload()));
         return "api";
@@ -1071,7 +2268,7 @@ async function hydrateStoredData() {
   }
 
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+    const saved = localSaved || JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
     if (!saved) return sharedApiOnline ? "seed" : "default";
     if (saved.version !== DEMO_VERSION) {
       localStorage.removeItem(STORAGE_KEY);
@@ -1131,7 +2328,7 @@ function isValidTime(time) {
 function minutesToTime(minutes) {
   const hour = Math.floor(minutes / 60);
   const minute = minutes % 60;
-  return `${hour}:${String(minute).padStart(2, "0")}`;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 function monthName(year, month) {
@@ -1420,9 +2617,20 @@ function refreshReservationLineup(reservationIndex = 0) {
   return true;
 }
 
-function declineReservation(reservationIndex = 0) {
+async function declineReservation(reservationIndex = 0) {
   const reservation = personalReservations[reservationIndex];
   if (!reservation?.attendance) return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${reservation.id}/withdraw`, { method: "POST" });
+      await refreshPlatformReservations();
+      lastActionMessage = "Omluvenka je ulozena a ostatni hraci dostali zpravu.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const playerId = currentPersonaId();
   const me = reservation.attendance.find((player) => normalizeAttendancePlayer(player).playerId === playerId);
   if (!me) return false;
@@ -1446,12 +2654,25 @@ function declineReservation(reservationIndex = 0) {
   return true;
 }
 
-function undoReservationDecline(reservationIndex = 0) {
+async function undoReservationDecline(reservationIndex = 0) {
   const reservation = personalReservations[reservationIndex];
   const playerId = currentPersonaId();
   if (!canUndoReservationDecline(reservation, playerId) || !reservation?.attendance) {
     lastActionMessage = "Omluvenku uz nejde vzit zpet, protoze nahradnik byl potvrzen nebo rezervace uz neexistuje.";
     return false;
+  }
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${reservation.id}/withdraw/undo`, { method: "POST" });
+      await refreshPlatformReservations();
+      lastActionMessage = "Omluvenka je zrusena a hrac je znovu v sestave.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.code === "replacement_already_filled"
+        ? "Omluvenku uz nejde vzit zpet, misto obsadil potvrzeny nahradnik."
+        : error.message;
+      return false;
+    }
   }
   const me = reservation.attendance.find((player) => normalizeAttendancePlayer(player).playerId === playerId);
   if (!me) return false;
@@ -1530,7 +2751,7 @@ function relationshipState(playerId = "") {
   return request.from === currentPersonaId() ? "sent" : "received";
 }
 
-function createFriendRequest(playerId = "") {
+async function createFriendRequest(playerId = "") {
   const from = currentPersonaId();
   const to = playerId;
   if (!to || from === to || areFriends(from, to)) return false;
@@ -1538,6 +2759,25 @@ function createFriendRequest(playerId = "") {
   if (existing) {
     lastActionMessage = existing.from === from ? "Zadost o kamaradstvi uz ceka na potvrzeni." : "Hrac uz ti poslal zadost, muzes ji potvrdit v oznameni.";
     return false;
+  }
+  if (platformContext.enabled) {
+    const targetMembershipId = platformContext.membersByPersona.get(to);
+    if (!targetMembershipId) {
+      lastActionMessage = "Hrac nema aktivni clenstvi v tomto klubu.";
+      return false;
+    }
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/friend-requests`, {
+        method: "POST",
+        body: JSON.stringify({ targetMembershipId })
+      });
+      await Promise.all([refreshPlatformRelationships(), refreshPlatformReservations()]);
+      lastActionMessage = "Zadost o kamaradstvi byla odeslana.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
   }
   const sender = playerRecordById(from);
   friendRequests.push({
@@ -1560,10 +2800,25 @@ function createFriendRequest(playerId = "") {
   return true;
 }
 
-function acceptFriendRequest(notificationId = "") {
+async function acceptFriendRequest(notificationId = "") {
   const playerId = currentPersonaId();
   const notice = notifications.find((item) => item.id === notificationId) ||
     notifications.find((item) => item.type === "friend-request" && item.recipients?.includes(playerId));
+  if (platformContext.enabled) {
+    if (!notice?.friendRequestId) return false;
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/friend-requests/${notice.friendRequestId}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ response: "accept" })
+      });
+      await Promise.all([refreshPlatformRelationships(), refreshPlatformReservations()]);
+      lastActionMessage = "Kamaradstvi bylo potvrzeno.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const request = notice
     ? friendRequests.find((item) => item.status === "pending" && item.from === notice.requestFrom && item.to === playerId)
     : friendRequests.find((item) => item.status === "pending" && item.to === playerId);
@@ -1586,9 +2841,24 @@ function acceptFriendRequest(notificationId = "") {
   return true;
 }
 
-function declineFriendRequest(notificationId = "") {
+async function declineFriendRequest(notificationId = "") {
   const playerId = currentPersonaId();
   const notice = notifications.find((item) => item.id === notificationId);
+  if (platformContext.enabled) {
+    if (!notice?.friendRequestId) return false;
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/friend-requests/${notice.friendRequestId}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ response: "decline" })
+      });
+      await Promise.all([refreshPlatformRelationships(), refreshPlatformReservations()]);
+      lastActionMessage = "Zadost byla odmitnuta.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const request = notice
     ? friendRequests.find((item) => item.status === "pending" && item.from === notice.requestFrom && item.to === playerId)
     : null;
@@ -1656,6 +2926,28 @@ function timeRangesOverlap(startA, endA, startB, endB) {
   return timeToMinutes(endA) > timeToMinutes(startB) && timeToMinutes(startA) < timeToMinutes(endB);
 }
 
+function hasDateTimePassed(isoDate = "", endTime = "23:59", now = new Date()) {
+  const date = dateFromIso(isoDate);
+  if (!date || !isValidTime(endTime)) return false;
+  const [hour, minute] = endTime.split(":").map(Number);
+  date.setHours(hour, minute, 0, 0);
+  return date.getTime() < now.getTime();
+}
+
+function reservationHasEnded(reservation, now = new Date()) {
+  return Boolean(reservation && hasDateTimePassed(reservationIsoDate(reservation), reservation.end || "23:59", now));
+}
+
+function eventEndTime(event) {
+  if (isValidTime(event.endTime)) return event.endTime;
+  const range = String(event.meta || "").match(/\b\d{1,2}:\d{2}\s*-\s*(\d{1,2}:\d{2})\b/);
+  return range?.[1] && isValidTime(range[1]) ? range[1] : "23:59";
+}
+
+function eventHasEnded(event, now = new Date()) {
+  return Boolean(event?.isoDate && hasDateTimePassed(event.isoDate, eventEndTime(event), now));
+}
+
 function playerHasTimeCollision(playerId, day, date, start, end, ignoreReservationId = "") {
   return personalReservations.some((reservation) =>
     reservation.id !== ignoreReservationId &&
@@ -1669,7 +2961,13 @@ function visibleReservations() {
   const playerId = currentPersonaId();
   return personalReservations.filter((reservation) =>
     reservation.status !== "cancelled" &&
-    (reservationHasPlayer(reservation, playerId) || canUndoReservationDecline(reservation, playerId))
+    !reservationHasEnded(reservation) &&
+    (
+      normalizedAttendance(reservation).some((player) =>
+        player.playerId === playerId && activeForGame(player)
+      ) ||
+      canUndoReservationDecline(reservation, playerId)
+    )
   );
 }
 
@@ -1677,7 +2975,11 @@ function visibleNotifications() {
   if (state.role !== "player") return [];
   const playerId = currentPersonaId();
   const explicit = notifications.filter((item) =>
-    item.eventId && events.find((event) => event.id === item.eventId)?.status === "cancelled" && item.type !== "event-cancelled"
+    item.eventId && eventHasEnded(events.find((event) => event.id === item.eventId))
+      ? false
+      : item.reservationId && reservationHasEnded(reservationById(item.reservationId))
+        ? false
+    : item.eventId && events.find((event) => event.id === item.eventId)?.status === "cancelled" && item.type !== "event-cancelled"
       ? false
       : Array.isArray(item.recipients)
       ? item.recipients.includes(playerId)
@@ -1686,6 +2988,7 @@ function visibleNotifications() {
         : true
   );
   const generatedAttendance = personalReservations.flatMap((reservation, reservationIndex) => {
+    if (reservationHasEnded(reservation)) return [];
     const me = normalizedAttendance(reservation).find((player) => player.playerId === playerId);
     const alreadyHasNotice = explicit.some((item) =>
       (item.type === "attendance" && item.reservationIndex === reservationIndex) ||
@@ -1708,10 +3011,14 @@ function visibleNotifications() {
 
 function appBadgeCount() {
   if (state.role === "player") return visibleNotifications().length;
-  if (state.role === "admin") return playerOrders.filter((order) => order.status !== "done" && order.status !== "cancelled").length;
+  if (state.role === "admin") return playerOrders.filter(orderNeedsAction).length;
   if (state.role === "stringer") return stringingOrders.filter((order) => order.status !== "delivered" && order.status !== "cancelled").length;
   if (state.role === "seller") return sellerEvents().filter((event) => event.status !== "published").length;
   return 0;
+}
+
+function orderNeedsAction(order) {
+  return !["completed", "cancelled"].includes(order?.serverStatus || "") && !["predano hraci", "zruseno", "hotovo"].includes(String(order?.status || "").toLowerCase());
 }
 
 function updateAppBadge() {
@@ -1754,9 +3061,11 @@ function urlBase64ToUint8Array(value) {
 }
 
 async function registerPushSubscription() {
-  if (!API_BASE || state.role !== "player" || !("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+  if ((!API_BASE && !platformContext.enabled) || state.role !== "player" || !("serviceWorker" in navigator) || !("PushManager" in window)) return false;
   const registration = await navigator.serviceWorker.ready;
-  const keyResponse = await fetch(apiUrl("/api/push/vapid-public-key"), { cache: "no-store" });
+  const keyResponse = platformContext.enabled
+    ? await fetch(`${PLATFORM_API_BASE}/api/v2/push/public-key`, { cache: "no-store", credentials: "include" })
+    : await fetch(apiUrl("/api/push/vapid-public-key"), { cache: "no-store" });
   const keyPayload = await keyResponse.json();
   if (!keyResponse.ok || !keyPayload.publicKey) throw new Error("Push key unavailable");
   let subscription = await registration.pushManager.getSubscription();
@@ -1766,10 +3075,11 @@ async function registerPushSubscription() {
       applicationServerKey: urlBase64ToUint8Array(keyPayload.publicKey)
     });
   }
-  const response = await fetch(apiUrl("/api/push/subscribe"), {
+  const response = await fetch(platformContext.enabled ? `${PLATFORM_API_BASE}/api/v2/push/subscriptions` : apiUrl("/api/push/subscribe"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ playerId: currentPersonaId(), subscription: subscription.toJSON() })
+    credentials: platformContext.enabled ? "include" : "same-origin",
+    body: JSON.stringify(platformContext.enabled ? subscription.toJSON() : { playerId: currentPersonaId(), subscription: subscription.toJSON() })
   });
   if (!response.ok) throw new Error("Push subscription failed");
   return true;
@@ -1785,9 +3095,10 @@ async function refreshPushSubscription() {
     const registration = await navigator.serviceWorker.ready;
     const subscription = await registration.pushManager.getSubscription();
     if (subscription) {
-      await fetch(apiUrl("/api/push/unsubscribe"), {
-        method: "POST",
+      await fetch(platformContext.enabled ? `${PLATFORM_API_BASE}/api/v2/push/subscriptions` : apiUrl("/api/push/unsubscribe"), {
+        method: platformContext.enabled ? "DELETE" : "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: platformContext.enabled ? "include" : "same-origin",
         body: JSON.stringify({ endpoint: subscription.endpoint })
       });
     }
@@ -1804,6 +3115,26 @@ function applyClubBranding() {
       ? `<img src="${club.logoUrl}" alt="${club.name}">`
       : (club.logoText || club.name.split(/\s+/).map((word) => word[0]).join("").slice(0, 3).toUpperCase());
   }
+  const heading = document.querySelector("#clubNameTitle");
+  let selector = document.querySelector("#clubSelector");
+  if (heading && platformContext.clubs.length > 1) {
+    if (!selector) {
+      selector = document.createElement("select");
+      selector.id = "clubSelector";
+      selector.className = "club-selector";
+      heading.insertAdjacentElement("afterend", selector);
+    }
+    selector.innerHTML = platformContext.clubs.map((item) => `<option value="${item.clubId}" ${item.clubId === platformContext.clubId ? "selected" : ""}>${item.name}</option>`).join("");
+  } else if (selector) selector.remove();
+}
+
+function multiClubAgendaSection() {
+  if (!platformContext.enabled || platformContext.clubs.length < 2) return "";
+  const items = [
+    ...(platformAgenda.reservations || []).map((item) => ({ date: item.reservation_date, start: item.start_time, club: item.club_name, title: `${item.game_type === "single" ? "Dvouhra" : "Ctyrhra"} · ${item.court_name}` })),
+    ...(platformAgenda.events || []).map((item) => ({ date: item.event_date, start: item.start_time, club: item.club_name, title: item.title }))
+  ].sort((a, b) => `${a.date}${a.start}`.localeCompare(`${b.date}${b.start}`)).slice(0, 6);
+  return `<section class="section multi-club-agenda"><div class="section-head"><h2>Moje kluby</h2><span class="pill">soukromy prehled</span></div><div class="profile-list">${items.map((item) => `<div class="profile-row"><span><strong>${item.title}</strong><small>${item.club}</small></span><span>${formatPortalDate(dateFromIso(item.date), false)}<small>${item.start}</small></span></div>`).join("") || `<div class="profile-row"><span>Zadne dalsi terminy</span></div>`}</div></section>`;
 }
 
 function testAppBadge() {
@@ -1835,8 +3166,8 @@ async function sendAndroidNotificationTest() {
     const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
     await registration.showNotification(`${club.name}: ${count} zpravy`, {
       body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
-      icon: "assets/club-logo-dm-192.png?v=76",
-      badge: "assets/club-logo-dm-192.png?v=76",
+      icon: "assets/club-logo-dm-192.png?v=124",
+      badge: "assets/club-logo-dm-192.png?v=124",
       tag: `siruch-test-${Date.now()}`,
       renotify: false,
       data: { url: "./index.html" }
@@ -1875,9 +3206,26 @@ function requestDemoLoginPassword() {
   return true;
 }
 
-function completeDemoLogin() {
+async function completeDemoLogin() {
   const email = document.querySelector("#loginEmailInput")?.value?.trim().toLowerCase();
   const password = document.querySelector("#loginPasswordInput")?.value?.trim();
+  if (platformContext.enabled) {
+    if (!email || !password) {
+      lastActionMessage = "Zadej e-mail a heslo.";
+      return false;
+    }
+    try {
+      await platformRequest("/api/v2/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password })
+      });
+      await loadPlatformContext();
+      return true;
+    } catch (error) {
+      lastActionMessage = error.status === 401 ? "E-mail nebo heslo nesedi." : error.message;
+      return false;
+    }
+  }
   const account = accountByEmail(email);
   if (!account || account.password !== password) {
     showToast("E-mail nebo heslo nesedi.");
@@ -1891,13 +3239,81 @@ function completeDemoLogin() {
   return true;
 }
 
-function saveAdminSettings() {
+async function completeLogout() {
+  try {
+    if (platformContext.enabled) await platformRequest("/api/v2/auth/logout", { method: "POST" });
+  } catch (_) {
+    // The local session is cleared even if the server session already expired.
+  }
+  try {
+    localStorage.removeItem(LOGIN_SESSION_KEY);
+  } catch (_) {}
+  platformContext.clubId = "";
+  platformContext.membershipId = "";
+  platformContext.userId = "";
+  platformContext.email = "";
+  platformContext.role = "";
+  platformContext.membersByPersona.clear();
+  state.role = "guest";
+  state.view = "home";
+  lastActionMessage = "Odhlaseni probehlo.";
+  return true;
+}
+
+async function changeOwnPassword() {
+  if (!platformContext.enabled || !platformContext.userId) {
+    lastActionMessage = "Zmena hesla je dostupna po prihlaseni k platforme.";
+    return false;
+  }
+  const currentPassword = document.querySelector("#currentPasswordInput")?.value || "";
+  const newPassword = document.querySelector("#newPasswordInput")?.value || "";
+  const confirmation = document.querySelector("#confirmPasswordInput")?.value || "";
+  if (newPassword.length < 12) {
+    lastActionMessage = "Nove heslo musi mit alespon 12 znaku.";
+    return false;
+  }
+  if (newPassword !== confirmation) {
+    lastActionMessage = "Nova hesla se neshoduji.";
+    return false;
+  }
+  try {
+    await platformRequest("/api/v2/me/password", {
+      method: "PUT",
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    await completeLogout();
+    lastActionMessage = "Heslo je zmenene. Vsechna zarizeni byla odhlasena; prihlas se novym heslem.";
+    return true;
+  } catch (error) {
+    lastActionMessage = error.code === "invalid_current_password" ? "Soucasne heslo nesedi." : error.message;
+    return false;
+  }
+}
+
+async function saveAdminSettings() {
   const name = document.querySelector("#clubNameInput")?.value?.trim();
   const logoText = document.querySelector("#clubLogoTextInput")?.value?.trim();
   const logoUrl = document.querySelector("#clubLogoUrlInput")?.value?.trim();
   const open = document.querySelector("#clubOpenSettingsInput")?.value?.trim();
   const close = document.querySelector("#clubCloseSettingsInput")?.value?.trim();
-  if (name) club.name = name;
+  if (!name || !open || !close || timeToMinutes(close) <= timeToMinutes(open)) {
+    lastActionMessage = "Zadej nazev klubu a platnou oteviraci dobu.";
+    return false;
+  }
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}`, {
+        method: "PUT",
+        body: JSON.stringify({ name, logoUrl: logoUrl || "", openTime: open, closeTime: close })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = "Nastaveni klubu je ulozene a platne pro vsechny kurty.";
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
+  club.name = name;
   club.logoText = logoText || club.logoText || "";
   club.logoUrl = logoUrl || "";
   if (open && close && timeToMinutes(close) > timeToMinutes(open)) {
@@ -1920,7 +3336,7 @@ function visibleGameProposals() {
 
 function visibleJoinedEvents() {
   const ids = state.joinedEventsByPlayer[currentPersonaId()] || [];
-  return ids.map((id) => events.find((event) => event.id === id)).filter((event) => event && event.status !== "cancelled");
+  return ids.map((id) => events.find((event) => event.id === id)).filter((event) => event && event.status !== "cancelled" && !eventHasEnded(event));
 }
 
 function eventHasRegisteredPlayer(event, player) {
@@ -1997,11 +3413,21 @@ function pollHasVoted(poll, playerId = currentPersonaId()) {
   return (poll?.options || []).some((option) => (option.votes || []).includes(playerId));
 }
 
-function voteInPoll(pollId = "", optionId = "") {
+async function voteInPoll(pollId = "", optionId = "") {
   const poll = pollById(pollId);
   const option = pollOptionById(poll, optionId);
   const playerId = currentPersonaId();
   if (!poll || !option || poll.status !== "active") return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/polls/${poll.id}/vote`, {
+        method: "POST", body: JSON.stringify({ optionId: option.id })
+      });
+      await Promise.all([refreshPlatformPolls(), refreshPlatformReservations()]);
+      lastActionMessage = "Hlas v ankete je ulozeny.";
+      return true;
+    } catch (error) { lastActionMessage = error.message; return false; }
+  }
   poll.options.forEach((item) => {
     item.votes = (item.votes || []).filter((id) => id !== playerId);
   });
@@ -2016,9 +3442,16 @@ function voteInPoll(pollId = "", optionId = "") {
   return true;
 }
 
-function remindPollVoters(pollId = "") {
+async function remindPollVoters(pollId = "") {
   const poll = pollById(pollId);
   if (!poll || poll.status !== "active") return false;
+  if (platformContext.enabled) {
+    try {
+      const result = await platformRequest(`/api/v2/clubs/${platformContext.clubId}/polls/${poll.id}/remind`, { method: "POST" });
+      lastActionMessage = `Pripominka odeslana ${result.notified || 0} nehlasujicim hracum.`;
+      return true;
+    } catch (error) { lastActionMessage = error.message; return false; }
+  }
   const recipients = players
     .map((player) => player.id)
     .filter((id) => !pollHasVoted(poll, id));
@@ -2035,7 +3468,7 @@ function remindPollVoters(pollId = "") {
   return true;
 }
 
-function createPollFromModal() {
+async function createPollFromModal() {
   const title = document.querySelector("#pollTitleInput")?.value?.trim() || "Co chcete otestovat na kurtech?";
   const end = document.querySelector("#pollEndInput")?.value?.trim() || "za 3 dny";
   const rawOptions = document.querySelector("#pollOptionsInput")?.value || "A - rakety Babolat\nB - rakety Wilson\nC - boty Wilson\nD - tricka Nike / Puma";
@@ -2047,6 +3480,17 @@ function createPollFromModal() {
     weighted: 0,
     logistics: "domluvit s dodavatelem podle vysledku"
   }));
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/polls`, {
+        method: "POST",
+        body: JSON.stringify({ title, question: "Vyber, o co mas zajem pri dalsi testovaci akci klubu.", endsAt: end, options: options.map((option) => option.label) })
+      });
+      await refreshPlatformPolls();
+      lastActionMessage = "Anketa je sdilena vsem hracum klubu.";
+      return true;
+    } catch (error) { lastActionMessage = error.message; return false; }
+  }
   const poll = {
     id: `poll-${Date.now()}`,
     title,
@@ -2066,10 +3510,29 @@ function createPollFromModal() {
   return true;
 }
 
-function closePollToEvent(pollId = "") {
+async function closePollToEvent(pollId = "") {
   const poll = pollById(pollId);
   const winner = pollWinner(poll);
   if (!poll || !winner) return false;
+  if (platformContext.enabled) {
+    try {
+      try {
+        await platformRequest(`/api/v2/clubs/${platformContext.clubId}/polls/${poll.id}/close`, { method: "POST" });
+      } catch (error) {
+        if (error.code !== "poll_not_active") throw error;
+      }
+      const date = document.querySelector("#pollEventDateInput")?.value || dateInputValue(nextTournamentSaturday());
+      const start = document.querySelector("#pollEventStartInput")?.value || "10:00";
+      const end = document.querySelector("#pollEventEndInput")?.value || "14:00";
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/polls/${poll.id}/supplier-request`, {
+        method: "POST",
+        body: JSON.stringify({ date, start, end, title: `Testovani: ${winner.label.replace(/^[A-D]\s*-\s*/i, "")}` })
+      });
+      await Promise.all([refreshPlatformPolls(), refreshPlatformSupplierRequests(), refreshPlatformReservations()]);
+      lastActionMessage = `Anketa je uzavrena. Navrh akce pro ${winner.label} dostal obchodnik.`;
+      return true;
+    } catch (error) { lastActionMessage = error.message; return false; }
+  }
   poll.status = "closed";
   const event = {
     id: `poll-event-${Date.now()}`,
@@ -2095,14 +3558,18 @@ function closePollToEvent(pollId = "") {
 }
 
 function publicEvents() {
-  return events.filter((event) => !event.status || event.status === "published");
+  return events.filter((event) => (!event.status || event.status === "published") && !eventHasEnded(event));
+}
+
+function archivedEvents() {
+  return events.filter((event) => event.status !== "cancelled" && eventHasEnded(event));
 }
 
 function sellerEvents() {
   return events.filter((event) => ["waiting_for_seller", "seller_counterproposal", "seller_confirmed"].includes(event.status));
 }
 
-function requestSellerApproval(eventId = "") {
+async function requestSellerApproval(eventId = "") {
   const event = events.find((item) => item.id === eventId);
   if (!event) return false;
   event.status = "waiting_for_seller";
@@ -2111,12 +3578,25 @@ function requestSellerApproval(eventId = "") {
   return true;
 }
 
-function sellerConfirmEvent(eventId = "") {
+async function sellerConfirmEvent(eventId = "") {
   const event = events.find((item) => item.id === eventId);
   if (!event) return false;
   const date = document.querySelector("#sellerEventDateInput")?.value?.trim() || event.requestedDate || event.meta;
   const delivery = document.querySelector("#sellerDeliveryInput")?.value?.trim() || "demo sada podle vysledku ankety";
   const note = document.querySelector("#sellerNoteInput")?.value?.trim() || "Termin potvrzen, zbozi lze dodat na klub pred akci.";
+  const confirmedDate = document.querySelector("#sellerEventDateInput")?.value || event.isoDate;
+  const confirmedStart = document.querySelector("#sellerEventStartInput")?.value || event.startTime;
+  const confirmedEnd = document.querySelector("#sellerEventEndInput")?.value || event.endTime;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/supplier-requests/${event.supplierRequestId}/respond`, {
+        method: "PUT", body: JSON.stringify({ response: "confirm", items: delivery, note, date: confirmedDate, start: confirmedStart, end: confirmedEnd })
+      });
+      await refreshPlatformSupplierRequests();
+      lastActionMessage = "Termin a obsah dodavky jsou potvrzene spravci.";
+      return true;
+    } catch (error) { lastActionMessage = error.message; return false; }
+  }
   event.requestedDate = date;
   event.meta = date;
   event.sellerDelivery = delivery;
@@ -2127,9 +3607,17 @@ function sellerConfirmEvent(eventId = "") {
   return true;
 }
 
-function publishApprovedEvent(eventId = "") {
+async function publishApprovedEvent(eventId = "") {
   const event = events.find((item) => item.id === eventId);
   if (!event || event.status !== "seller_confirmed") return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/supplier-requests/${event.supplierRequestId}/publish`, { method: "POST" });
+      await Promise.all([refreshPlatformEvents(), refreshPlatformSupplierRequests(), refreshPlatformReservations()]);
+      lastActionMessage = "Akce je publikovana hracum a prislo jim oznameni.";
+      return true;
+    } catch (error) { lastActionMessage = error.message; return false; }
+  }
   event.status = "published";
   event.sellerStatus = "publikovano hracum";
   notifyPlayersAboutEvent(event, "created");
@@ -2137,10 +3625,24 @@ function publishApprovedEvent(eventId = "") {
   return true;
 }
 
-function cancelAdminEvent(eventId = "") {
+async function cancelAdminEvent(eventId = "") {
   const event = events.find((item) => item.id === eventId);
   if (!event) return false;
   const reason = document.querySelector("#adminEventCancelReasonInput")?.value?.trim() || "Nedostatek ucastniku nebo organizacni duvody.";
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/events/${eventId}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ reason })
+      });
+      await Promise.all([refreshPlatformEvents(), refreshPlatformReservations()]);
+      lastActionMessage = `${event.title} je zrusena a prihlaseni hraci dostali duvod.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const cancelRecipients = eventRecipientIds(event);
   event.status = "cancelled";
   event.cancelReason = reason;
@@ -2162,7 +3664,7 @@ function tournamentById(id = "") {
   return tournaments.find((item) => item.id === id) || tournaments[0];
 }
 
-function createSingleTournamentFromModal() {
+async function createSingleTournamentFromModal() {
   const title = document.querySelector("#tournamentTitleInput")?.value?.trim() || "Novy single turnaj";
   const startDate = dateFromDateInput(document.querySelector("#tournamentDateInput")?.value || dateInputValue(nextTournamentSaturday()));
   const startTime = document.querySelector("#tournamentStartTimeInput")?.value || "9:00";
@@ -2171,17 +3673,48 @@ function createSingleTournamentFromModal() {
   const date = `${formatPortalDate(startDate)} ${startTime}`;
   const deadline = `${formatPortalDate(deadlineDate)} ${deadlineTime}`;
   const maxPlayers = Number(document.querySelector("#tournamentMaxInput")?.value || 16);
+  const tournamentType = document.querySelector("#tournamentTypeInput")?.value === "double" ? "double" : "single";
+  const entryFeeAmount = Number(document.querySelector("#tournamentFeeInput")?.value || 0);
+  if (!Number.isFinite(entryFeeAmount) || entryFeeAmount < 0) {
+    lastActionMessage = "Startovne musi byt nula nebo kladna castka.";
+    return false;
+  }
+  const entryFeeLabel = entryFeeAmount > 0 ? `${entryFeeAmount} Kc` : "Zdarma";
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/tournaments`, {
+        method: "POST",
+        body: JSON.stringify({
+          title,
+          type: tournamentType,
+          date: dateToIso(startDate),
+          start: startTime,
+          deadline: `${dateToIso(deadlineDate)}T${deadlineTime}`,
+          maxParticipants: maxPlayers,
+          courtIds: courts.slice(0, 3).map((court) => court.id),
+          entryFeeLabel,
+          rules: "Skupiny kazdy s kazdym, potom pavouk."
+        })
+      });
+      await refreshPlatformTournaments();
+      lastActionMessage = `${tournamentType === "double" ? "Double" : "Single"} turnaj je vytvoreny a hraci dostali oznameni.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   tournaments.unshift({
     id: `single-${Date.now()}`,
     title,
-    type: "single",
+    type: tournamentType,
     status: "registration",
     date,
     isoDate: dateToIso(startDate),
     deadline,
     courts: courts.slice(0, 3).map((court) => court.name),
     maxPlayers,
-    entryFee: "250 Kc",
+    entryFee: entryFeeLabel,
     rules: "Skupiny kazdy s kazdym, potom pavouk.",
     participants: [],
     groups: [],
@@ -2193,9 +3726,21 @@ function createSingleTournamentFromModal() {
   return true;
 }
 
-function toggleTournamentRegistration(tournamentId = "") {
+async function toggleTournamentRegistration(tournamentId = "") {
   const tournament = tournamentById(tournamentId);
   if (!tournament || tournament.status !== "registration" || state.role !== "player") return false;
+  if (platformContext.enabled) {
+    try {
+      const partnerMembershipId = document.querySelector("#tournamentPartnerInput")?.value || "";
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/tournaments/${tournamentId}/register`, { method: tournament.isRegistered ? "DELETE" : "POST", body: tournament.isRegistered ? undefined : JSON.stringify({ partnerMembershipId }) });
+      await refreshPlatformTournaments();
+      lastActionMessage = tournament.isRegistered ? "Z turnaje ses odhlasil." : "Prihlaseni na turnaj je potvrzeno.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.code === "tournament_full" ? "Turnaj je uz plny." : error.message;
+      return false;
+    }
+  }
   const name = currentUser.name.split(" ")[0];
   const index = tournament.participants.indexOf(name);
   if (index >= 0) {
@@ -2217,9 +3762,20 @@ function groupName(index) {
   return String.fromCharCode(65 + index);
 }
 
-function generateTournamentGroups(tournamentId = "") {
+async function generateTournamentGroups(tournamentId = "") {
   const tournament = tournamentById(tournamentId);
   if (!tournament) return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/tournaments/${tournamentId}/draw`, { method: "POST" });
+      await refreshPlatformTournaments();
+      lastActionMessage = "Prihlasky jsou uzavrene a skupiny vylosovane.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const playersList = [...tournament.participants];
   const groupCount = Math.max(1, Math.min(tournament.courts.length || 1, Math.ceil(playersList.length / 4)));
   const groups = Array.from({ length: groupCount }, (_, index) => ({ name: groupName(index), players: [], table: [] }));
@@ -2251,9 +3807,27 @@ function generateTournamentGroups(tournamentId = "") {
   return true;
 }
 
-function recordDemoTournamentResults(tournamentId = "") {
+async function recordDemoTournamentResults(tournamentId = "") {
   const tournament = tournamentById(tournamentId);
   if (!tournament?.matches?.length) return false;
+  if (platformContext.enabled) {
+    try {
+      for (const [index, match] of tournament.matches.filter((item) => item.stage === "group" && !item.score).entries()) {
+        await platformRequest(`/api/v2/clubs/${platformContext.clubId}/tournaments/${tournamentId}/matches/${match.id}`, {
+          method: "PUT",
+          body: JSON.stringify(tournament.type === "double"
+            ? { score: index % 2 ? "6:4" : "7:5", winnerTeamId: index % 3 === 0 ? match.teamBId : match.teamAId }
+            : { score: index % 2 ? "6:4" : "7:5", winnerMembershipId: index % 3 === 0 ? match.playerBMembershipId : match.playerAMembershipId })
+        });
+      }
+      await refreshPlatformTournaments();
+      lastActionMessage = "Vysledky skupin jsou ulozene pro vsechny hrace.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   tournament.matches.filter((match) => match.stage === "group").forEach((match, index) => {
     match.score = index % 2 ? "6:4" : "7:5";
     match.winner = index % 3 === 0 ? match.playerB : match.playerA;
@@ -2269,9 +3843,20 @@ function recordDemoTournamentResults(tournamentId = "") {
   return true;
 }
 
-function generateTournamentKnockout(tournamentId = "") {
+async function generateTournamentKnockout(tournamentId = "") {
   const tournament = tournamentById(tournamentId);
   if (!tournament?.groups?.length) return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/tournaments/${tournamentId}/knockout`, { method: "POST" });
+      await refreshPlatformTournaments();
+      lastActionMessage = "Pavouk je vytvoreny podle vysledku skupin.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const qualified = tournament.groups.flatMap((group) => group.table.slice(0, 2).map((row) => row.player));
   const bracket = [];
   for (let i = 0; i < qualified.length; i += 2) {
@@ -2290,19 +3875,41 @@ function generateTournamentKnockout(tournamentId = "") {
   return true;
 }
 
-function archiveTournament(tournamentId = "") {
+async function archiveTournament(tournamentId = "") {
   const tournament = tournamentById(tournamentId);
   if (!tournament) return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/tournaments/${tournamentId}/archive`, { method: "POST" });
+      await refreshPlatformTournaments();
+      lastActionMessage = "Turnaj je ulozeny do archivu.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   tournament.status = "archived";
   tournament.history = `Archiv: ${tournament.title}, ${tournament.participants.length} hracu, skupiny ${tournament.groups.length}, pavouk ${tournament.knockout.length} zapasu.`;
   persistData();
   return true;
 }
 
-function joinEventForPlayer(eventId, playerId = currentPersonaId()) {
+async function joinEventForPlayer(eventId, playerId = currentPersonaId()) {
   const event = events.find((item) => item.id === eventId);
   const player = playerRecordById(playerId) || currentPlayerRecord();
   if (!event || !player) return false;
+  if (platformContext.enabled && playerId === currentPersonaId()) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/events/${eventId}/register`, { method: "POST" });
+      await Promise.all([refreshPlatformEvents(), refreshPlatformReservations()]);
+      lastActionMessage = `${event.title} je pridana do tveho kalendare.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.code === "event_full" ? "Akce je uz plna." : error.message;
+      return false;
+    }
+  }
   state.joinedEventsByPlayer[playerId] = state.joinedEventsByPlayer[playerId] || [];
   if (!state.joinedEventsByPlayer[playerId].includes(eventId)) state.joinedEventsByPlayer[playerId].push(eventId);
   if (playerId === currentPersonaId()) state.joinedEvents.add(eventId);
@@ -2367,9 +3974,23 @@ function createStringingOrderFromProduct(baseOrder, reservation) {
   return stringingOrder;
 }
 
-function advanceStringingOrder(orderId, nextStatus) {
+async function advanceStringingOrder(orderId, nextStatus) {
   const order = stringingOrders.find((item) => item.id === orderId);
   if (!order) return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/stringing-jobs/${orderId}/transition`, {
+        method: "POST",
+        body: JSON.stringify({ status: nextStatus })
+      });
+      await Promise.all([refreshPlatformStringing(), refreshPlatformOrders(), refreshPlatformReservations()]);
+      lastActionMessage = "Stav vypletu byl sdilen se vsemi zapojenymi.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const labels = {
     with_stringer: "u vypletace",
     done: "vypleteno",
@@ -2450,7 +4071,7 @@ function bookingOverlaps(court, start, end) {
   );
 }
 
-function createBookingReservation() {
+async function createBookingReservation() {
   lastActionMessage = "";
   const court = courtFromBookingValue(document.querySelector("#bookingCourtInput")?.value);
   const start = document.querySelector("#bookingStartInput")?.value || club.open;
@@ -2478,6 +4099,35 @@ function createBookingReservation() {
   if (partnerId && playerHasTimeCollision(partnerId, day, isoDate, start, end)) {
     lastActionMessage = `${playerRecordById(partnerId)?.name || "Spoluhrac"} uz v tomto case hraje. Vyber jiny termin.`;
     return false;
+  }
+  if (platformContext.enabled) {
+    const participantMembershipIds = partnerId ? [platformContext.membersByPersona.get(partnerId)].filter(Boolean) : [];
+    if (partnerId && !participantMembershipIds.length) {
+      lastActionMessage = "Vybrany spoluhrac nema aktivni clenstvi v tomto klubu.";
+      return false;
+    }
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations`, {
+        method: "POST",
+        body: JSON.stringify({
+          courtId: court.id,
+          date: isoDate,
+          start,
+          end,
+          gameType,
+          participantMembershipIds,
+          participantMode: partnerMode === "confirmed" ? "confirmed" : "pending"
+        })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = partnerId && partnerMode === "invite"
+        ? "Rezervace je ulozena a spoluhrac dostal pozvanku."
+        : "Rezervace je ulozena v klubovem rozvrhu.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.code === "booking_conflict" ? "Kurt nebo nektery hrac uz je v tomto case obsazeny." : error.message;
+      return false;
+    }
   }
   const owner = currentPlayerRecord();
   const reservationId = `reservation-${Date.now()}-${currentPersonaId()}`;
@@ -2541,6 +4191,70 @@ function createBookingReservation() {
   return true;
 }
 
+function adminBookingPlayers() {
+  return players.filter((player) => player.clubRole === "player" && platformContext.membersByPersona.get(player.id));
+}
+
+async function createAdminBooking(recurring = false) {
+  if (!platformContext.enabled || state.role !== "admin") {
+    lastActionMessage = "Rucni rezervace spravce vyzaduje klubove API.";
+    return false;
+  }
+  const ownerPersona = document.querySelector("#adminBookingOwnerInput")?.value || "";
+  const ownerMembershipId = platformContext.membersByPersona.get(ownerPersona);
+  const participantMembershipIds = [...new Set([1, 2, 3]
+    .map((index) => document.querySelector(`#adminBookingPartner${index}Input`)?.value || "")
+    .filter((persona) => persona && persona !== ownerPersona)
+    .map((persona) => platformContext.membersByPersona.get(persona))
+    .filter(Boolean))];
+  if (!ownerMembershipId) {
+    lastActionMessage = "Vyber aktivniho hrace jako vlastnika rezervace.";
+    return false;
+  }
+  const body = {
+    courtId: document.querySelector("#adminBookingCourtInput")?.value || courts[0]?.id,
+    ownerMembershipId,
+    participantMembershipIds,
+    start: document.querySelector("#adminBookingStartInput")?.value || "17:00",
+    end: document.querySelector("#adminBookingEndInput")?.value || "19:00",
+    gameType: document.querySelector("#adminBookingGameInput")?.value || "double",
+    title: document.querySelector("#adminBookingTitleInput")?.value?.trim() || (recurring ? "Trvala rezervace" : "Rucni rezervace"),
+    participantMode: "confirmed"
+  };
+  if (recurring) {
+    body.startDate = document.querySelector("#adminBookingDateInput")?.value || selectedBookingIsoDate();
+    body.endDate = document.querySelector("#adminBookingSeriesEndInput")?.value || body.startDate;
+  } else {
+    body.date = document.querySelector("#adminBookingDateInput")?.value || selectedBookingIsoDate();
+  }
+  try {
+    const result = await platformRequest(`/api/v2/clubs/${platformContext.clubId}/${recurring ? "reservation-series" : "reservations"}`, {
+      method: "POST", body: JSON.stringify(body)
+    });
+    await Promise.all([refreshPlatformReservations(), recurring ? refreshPlatformReservationSeries() : Promise.resolve(false)]);
+    lastActionMessage = recurring
+      ? `Trvala rezervace je ulozena. Vytvoreno ${result.series?.occurrences || 0} terminu.`
+      : "Jednorazova rezervace je ulozena do rozvrhu i hracum.";
+    return true;
+  } catch (error) {
+    lastActionMessage = error.code === "booking_conflict" ? "Nektery termin koliduje s kurtem nebo hracem. Serie se nevytvorila ani castecne." : error.message;
+    return false;
+  }
+}
+
+async function cancelAdminReservationSeries(seriesId = "") {
+  const from = document.querySelector("#adminSeriesCancelFromInput")?.value || selectedBookingIsoDate();
+  try {
+    const result = await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservation-series/${seriesId}?from=${encodeURIComponent(from)}`, { method: "DELETE" });
+    await Promise.all([refreshPlatformReservations(), refreshPlatformReservationSeries()]);
+    lastActionMessage = `Ukonceno ${result.cancelledOccurrences || 0} budoucich terminu serie.`;
+    return true;
+  } catch (error) {
+    lastActionMessage = error.message;
+    return false;
+  }
+}
+
 function updateBookingReservationState(reservationId, partnerId, status) {
   const reservation = reservationById(reservationId);
   if (!reservation?.attendance) return false;
@@ -2570,15 +4284,41 @@ function updateBookingReservationState(reservationId, partnerId, status) {
   return true;
 }
 
-function acceptBookingInvite(notificationId = "") {
+async function acceptBookingInvite(notificationId = "") {
   const item = notifications.find((entry) => entry.id === notificationId) || notifications.find((entry) => entry.type === "booking-invite" && entry.recipients?.includes(currentPersonaId()));
   if (!item) return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${item.reservationId}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ response: "accept" })
+      });
+      await refreshPlatformReservations();
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   return updateBookingReservationState(item.reservationId, currentPersonaId(), "confirmed");
 }
 
-function declineBookingInvite(notificationId = "") {
+async function declineBookingInvite(notificationId = "") {
   const item = notifications.find((entry) => entry.id === notificationId) || notifications.find((entry) => entry.type === "booking-invite" && entry.recipients?.includes(currentPersonaId()));
   if (!item) return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${item.reservationId}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ response: "decline" })
+      });
+      await refreshPlatformReservations();
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   return updateBookingReservationState(item.reservationId, currentPersonaId(), "declined");
 }
 
@@ -2586,18 +4326,50 @@ function firstUpcomingEvent() {
   return events[0];
 }
 
-function createProductOrder() {
+async function createProductOrder() {
   const product = document.querySelector("#orderProductInput")?.value || clubShopItems[0].title;
   const mode = document.querySelector("#orderDeliveryInput")?.value || "reservation";
   const pickupDate = document.querySelector("#orderPickupInput")?.value?.trim();
-  const reservationIndex = Number(document.querySelector("#orderReservationInput")?.value || 0);
+  const reservationValue = document.querySelector("#orderReservationInput")?.value || "";
   const eventId = document.querySelector("#orderEventInput")?.value;
   const note = document.querySelector("#orderNoteInput")?.value?.trim();
   const item = clubShopItems.find((shopItem) => shopItem.title === product) || clubShopItems[0];
   const player = currentPlayerRecord();
-  const reservation = visibleReservations()[reservationIndex] || visibleReservations()[0] || personalReservations[0];
+  const reservation = visibleReservations().find((entry) => entry.id === reservationValue) || visibleReservations()[0] || personalReservations[0];
   const event = events.find((eventItem) => eventItem.id === eventId) || firstUpcomingEvent();
   const reservationLabel = reservation ? `${reservationDateLabel(reservation)} ${reservation.start}` : (pickupDate || "bez rezervace");
+  if (platformContext.enabled) {
+    if (mode === "reservation" && !reservation) {
+      lastActionMessage = "Pro doruceni k rezervaci nejdrive vyber svou aktivni rezervaci.";
+      return false;
+    }
+    if (mode === "event" && !event) {
+      lastActionMessage = "Vyber aktivni klubovou akci.";
+      return false;
+    }
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/orders`, {
+        method: "POST",
+        body: JSON.stringify({
+          productName: product,
+          productType: isStringingProduct(product) ? "service" : item.type === "demo" ? "demo" : "product",
+          amountMinor: Math.round(Number((item.price || "").match(/\d+/)?.[0] || 0) * 100),
+          deliveryMode: mode,
+          pickupDate: mode === "pickup" ? pickupDate : null,
+          reservationId: mode === "reservation" ? reservation.id : null,
+          eventId: mode === "event" ? event.id : null,
+          note
+        })
+      });
+      await refreshPlatformOrders();
+      if (isStringingProduct(product)) await refreshPlatformStringing();
+      lastActionMessage = "Objednavka byla odeslana spravci.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const order = {
     id: `order-${Date.now()}`,
     player: player.name,
@@ -2792,10 +4564,25 @@ function friendOptions(preselected = "", context = {}) {
     `).join("") || `<div class="empty-state">Zatim nemas potvrzene kamarady. Otevri hrace klubu a posli zadost o kamaradstvi.</div>`;
 }
 
-function saveAdminOrder(product, player) {
+async function saveAdminOrder(product, player) {
   const order = playerOrders.find((item) => item.product === product && item.player === player) || playerOrders.find((item) => item.product === product);
   if (!order) return false;
   const source = document.querySelector("#orderSourceInput")?.value || order.source || "stock";
+  if (platformContext.enabled) {
+    const status = document.querySelector("#orderStatusInput")?.value || (source === "supplier" ? "ordered" : source === "check" ? "checking" : "preparing");
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/orders/${order.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ source, status })
+      });
+      await refreshPlatformOrders();
+      lastActionMessage = "Stav objednavky byl ulozen.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   order.source = source;
   order.sourceLabel = source === "stock" ? "ze skladu klubu" : source === "supplier" ? "objednat od dodavatele" : "overit dostupnost";
   order.status = source === "supplier"
@@ -2810,7 +4597,7 @@ function saveAdminOrder(product, player) {
   return true;
 }
 
-function createGameInvitation() {
+async function createGameInvitation() {
   lastActionMessage = "";
   const gameType = document.querySelector("#inviteGameType")?.value || "double";
   const maxInvitees = gameType === "single" ? 1 : 3;
@@ -2821,13 +4608,14 @@ function createGameInvitation() {
   }
   const time = document.querySelector("#inviteTimeInput")?.value || "Patek 17:00-18:30";
   const court = document.querySelector("#inviteCourtInput")?.value || "Kurt 1 · Antuka";
+  const selectedCourtForProposal = courts.find((item) => item.id === court) || courtFromLabel(court);
   const parsed = parseProposalTime(time);
   const proposalIsoDate = parsed?.isoDate || (parsed ? nextIsoDateForDay(parsed.day) : selectedBookingIsoDate());
   if (parsed && playerHasTimeCollision(currentPersonaId(), parsed.day, proposalIsoDate, parsed.start, parsed.end)) {
     lastActionMessage = "V tomto case uz mas rezervaci. Vyber jiny termin.";
     return false;
   }
-  if (parsed && courtHasTimeCollision(courtFromLabel(court), proposalIsoDate, parsed.start, parsed.end)) {
+  if (parsed && courtHasTimeCollision(selectedCourtForProposal, proposalIsoDate, parsed.start, parsed.end)) {
     lastActionMessage = "Vybrany kurt je v tomto case obsazeny. Vyber jiny cas nebo kurt.";
     return false;
   }
@@ -2845,6 +4633,35 @@ function createGameInvitation() {
     return false;
   }
   const owner = currentPlayerRecord();
+  if (platformContext.enabled) {
+    const selectedCourt = selectedCourtForProposal;
+    const participantMembershipIds = invitees.map((id) => platformContext.membersByPersona.get(id)).filter(Boolean);
+    if (!parsed || !selectedCourt || participantMembershipIds.length !== invitees.length) {
+      lastActionMessage = "Termin, kurt nebo nektery hrac uz neni dostupny.";
+      return false;
+    }
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations`, {
+        method: "POST",
+        body: JSON.stringify({
+          courtId: selectedCourt.id,
+          date: proposalIsoDate,
+          start: parsed.start,
+          end: parsed.end,
+          gameType,
+          participantMembershipIds,
+          participantMode: "pending",
+          title: "Navrh hry"
+        })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = "Navrh byl odeslan a kurt ceka na potvrzeni hracu.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const proposal = duplicate || {
     id: `proposal-${Date.now()}`,
     ownerId: currentPersonaId(),
@@ -2899,9 +4716,19 @@ function createEventInvitation(eventId) {
   return true;
 }
 
-function acceptReplacementInvite(notificationId = "") {
-  const item = notifications.find((entry) => entry.id === notificationId) || notifications.find((entry) => entry.type === "invite" && entry.reservationIndex !== undefined && entry.recipients?.includes(currentPersonaId()));
+async function acceptReplacementInvite(notificationId = "") {
+  const item = notifications.find((entry) => entry.id === notificationId) || notifications.find((entry) => ["invite", "replacement-invite"].includes(entry.type) && entry.recipients?.includes(currentPersonaId()));
   if (!item) return false;
+  if (platformContext.enabled && item.reservationId) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${item.reservationId}/replacements/respond`, {
+        method: "POST", body: JSON.stringify({ response: "accept" })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = "Souhlas s roli nahradnika byl odeslan sestave.";
+      return true;
+    } catch (error) { lastActionMessage = error.message; return false; }
+  }
   const reservation = personalReservations[item.reservationIndex || 0];
   const playerId = currentPersonaId();
   if (reservation?.attendance) {
@@ -2919,15 +4746,52 @@ function acceptReplacementInvite(notificationId = "") {
   return true;
 }
 
-function declineReplacementInvite(notificationId = "") {
+async function declineReplacementInvite(notificationId = "") {
   const item = notifications.find((entry) => entry.id === notificationId);
   if (!item) return false;
+  if (platformContext.enabled && item.reservationId) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${item.reservationId}/replacements/respond`, {
+        method: "POST", body: JSON.stringify({ response: "decline" })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = "Pozvanka nahradnika byla odmitnuta.";
+      return true;
+    } catch (error) { lastActionMessage = error.message; return false; }
+  }
   notifications.splice(0, notifications.length, ...notifications.filter((entry) => entry.id !== item.id));
   persistData();
   return true;
 }
 
-function declineGameProposal(proposalId) {
+async function voteForPlatformReplacement(notificationId = "") {
+  const item = notifications.find((entry) => entry.id === notificationId);
+  if (!item?.reservationId || !item.candidateMembershipId) return false;
+  try {
+    await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${item.reservationId}/replacements/vote`, {
+      method: "POST", body: JSON.stringify({ candidateMembershipId: item.candidateMembershipId })
+    });
+    await refreshPlatformReservations();
+    lastActionMessage = "Hlas pro nahradnika je ulozeny.";
+    return true;
+  } catch (error) { lastActionMessage = error.message; return false; }
+}
+
+async function declineGameProposal(proposalId) {
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${proposalId}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ response: "decline" })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = "Pozvanka byla odmitnuta.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const playerId = currentPersonaId();
   const proposal = gameProposals.find((item) => item.id === proposalId);
   if (!proposal) return false;
@@ -2941,10 +4805,39 @@ function declineGameProposal(proposalId) {
   return true;
 }
 
-function acceptEventInvite(eventId, notificationId = "") {
+async function sendGameCounterproposal(proposalId = "") {
+  const date = document.querySelector("#counterDateInput")?.value;
+  const courtId = document.querySelector("#counterCourtInput")?.value;
+  const start = document.querySelector("#counterStartInput")?.value;
+  const end = document.querySelector("#counterEndInput")?.value;
+  if (!platformContext.enabled || !proposalId) return false;
+  try {
+    await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${proposalId}/counterproposals`, {
+      method: "POST", body: JSON.stringify({ date, courtId, start, end })
+    });
+    await refreshPlatformReservations();
+    lastActionMessage = "Protinavrh byl odeslan zvoucimu hraci.";
+    return true;
+  } catch (error) { lastActionMessage = error.message; return false; }
+}
+
+async function respondGameCounterproposal(notificationId = "", response = "accept") {
+  const item = notifications.find((entry) => entry.id === notificationId);
+  if (!item?.counterproposalId) return false;
+  try {
+    await platformRequest(`/api/v2/clubs/${platformContext.clubId}/counterproposals/${item.counterproposalId}/respond`, {
+      method: "POST", body: JSON.stringify({ response })
+    });
+    await refreshPlatformReservations();
+    lastActionMessage = response === "accept" ? "Novy termin je rezervovany v kalendari kurtu." : "Protinavrh byl odmitnut.";
+    return true;
+  } catch (error) { lastActionMessage = error.message; return false; }
+}
+
+async function acceptEventInvite(eventId, notificationId = "") {
   const event = events.find((item) => item.id === eventId);
   if (!event) return false;
-  joinEventForPlayer(event.id);
+  if (!await joinEventForPlayer(event.id)) return false;
   notifications.splice(0, notifications.length, ...notifications.filter((item) => item.id !== notificationId));
   persistData();
   return true;
@@ -2957,7 +4850,15 @@ function nextVisibleReservation() {
 function slotType(court, time) {
   const current = timeToMinutes(time);
   const reservation = courtReservations(court).find((item) => current >= timeToMinutes(item.start) && current < timeToMinutes(item.end));
-  return reservation?.type || "free";
+  if (!reservation) return "free";
+  if (state.role === "admin") return reservation.type === "special" ? "special" : "busy";
+  const linked = reservation.reservationId ? reservationById(reservation.reservationId) : null;
+  if (!linked) return reservation.type;
+  const attendance = normalizedAttendance(linked);
+  const mine = attendance.find((player) => player.playerId === currentPersonaId());
+  if (reservation.type === "mine") return mine && activeForGame(mine) ? "mine" : "busy";
+  if (reservation.type === "pending") return mine && mine.status !== "declined" ? "pending" : "busy";
+  return reservation.type;
 }
 
 function slotReservation(court, time) {
@@ -3142,6 +5043,7 @@ function freeWindowLabel(court, isoDate = dateToIso(appToday)) {
 }
 
 function liveCourtUtilization(isoDate = dateToIso(appToday)) {
+  if (platformAnalytics?.courts?.length && isoDate === dateToIso(appToday)) return platformAnalytics.courts.map((item) => ({court:item.name,surface:courts.find((court)=>court.id===item.id)?.surface||"",utilization:Number(item.occupancyPct||0),free:freeWindowLabel(courts.find((court)=>court.id===item.id)||courts[0],isoDate),revenue:Number(item.revenue_minor||0)/100,tone:Number(item.occupancyPct||0)>=75?"good":Number(item.occupancyPct||0)>=45?"warn":"low"}));
   const open = timeToMinutes(club.open);
   const close = timeToMinutes(club.close);
   const total = Math.max(1, close - open);
@@ -3181,7 +5083,7 @@ function liveAdminStats() {
   const averageUtilization = utilization.length
     ? Math.round(utilization.reduce((sum, item) => sum + item.utilization, 0) / utilization.length)
     : 0;
-  const pendingOrders = playerOrders.filter((order) => !["vyrizeno", "predano", "hotovo"].includes(String(order.status || "").toLowerCase())).length;
+  const pendingOrders = playerOrders.filter(orderNeedsAction).length;
   return [
     { value: `${averageUtilization} %`, label: "Vytizeni dnes", tone: averageUtilization >= 70 ? "good" : averageUtilization >= 40 ? "warn" : "low" },
     { value: String(todayReservations.length), label: "Rezervace dnes", tone: "neutral" },
@@ -3194,7 +5096,7 @@ function liveAdminTasks() {
   const todayIso = dateToIso(appToday);
   const todayReservations = reservationsForIsoDate(todayIso);
   const incompleteToday = incompleteReservationCount(todayReservations);
-  const pendingOrders = playerOrders.filter((order) => !["vyrizeno", "predano", "hotovo"].includes(String(order.status || "").toLowerCase()));
+  const pendingOrders = playerOrders.filter(orderNeedsAction);
   const freeCourt = liveCourtUtilization(todayIso).find((item) => item.free !== "bez volna");
   const tasks = [];
   if (incompleteToday) {
@@ -3225,6 +5127,7 @@ function monthReservations(year, month) {
 }
 
 function liveMonthlyRevenue() {
+  if (platformAnalytics?.months?.length) return platformAnalytics.months.map((item) => ({month:item.month,value:Number(item.revenue_minor||0)/100}));
   return Array.from({ length: 6 }, (_, index) => {
     const date = new Date(appToday.getFullYear(), appToday.getMonth() - 5 + index, 1);
     const reservations = monthReservations(date.getFullYear(), date.getMonth());
@@ -3236,6 +5139,10 @@ function liveMonthlyRevenue() {
 }
 
 function liveCourtBusinessStats() {
+  if (platformAnalytics?.courts?.length) {
+    const maxRevenue=Math.max(1,...platformAnalytics.courts.map((item)=>Number(item.revenue_minor||0)));
+    return platformAnalytics.courts.map((item)=>({court:item.name,current:Number(item.revenue_minor||0)/100,max:Math.max(Number(item.revenue_minor||0)/100,Math.round((Number(item.revenue_minor||0)/100)/(Math.max(1,Number(item.occupancyPct||0))/100))),trend:`${Number(item.occupancyPct||0)} %`,popularity:Number(item.revenue_minor||0)===maxRevenue?"nejoblibenejsi":Number(item.revenue_minor||0)===0?"bez rezervaci":"aktivni",series:[35,45,55,Math.max(8,Number(item.occupancyPct||0))]}));
+  }
   const year = appToday.getFullYear();
   const month = appToday.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -3308,6 +5215,25 @@ function totalCredit(player) {
   return (player.paidCredit || 0) + (player.bonusCredit || 0);
 }
 
+function creditRuleForAmount(amount) {
+  return [...creditBonusRules]
+    .filter((rule) => Number(rule.paid) <= Number(amount) && Number(rule.paid) > 0)
+    .sort((left, right) => Number(right.paid) - Number(left.paid))[0] || null;
+}
+
+function playerCreditTransactions(playerId) {
+  return creditTransactions
+    .filter((transaction) => transaction.playerId === playerId)
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+}
+
+function manualCreditPreview(amount) {
+  const paid = Math.max(0, Number(amount) || 0);
+  const rule = creditRuleForAmount(paid);
+  const bonus = rule ? Number(rule.bonus) || 0 : 0;
+  return { paid, bonus, total: paid + bonus, rule };
+}
+
 function courtCharge(basePrice, hours, player) {
   const finalHourly = playerFinalPrice(basePrice, player);
   return {
@@ -3342,6 +5268,40 @@ function playerTone(player) {
   return "guest";
 }
 
+function normalizedSearchText(value = "") {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function escapeAttribute(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function visibleAdminNote(player) {
+  const note = String(player?.adminNote || "").trim();
+  return normalizedSearchText(note) === "cisty testovaci profil bez stare historie." ? "" : note;
+}
+
+function filteredAdminPlayers() {
+  const query = normalizedSearchText(state.adminPlayerSearch);
+  if (!query) return adminPlayerDirectory;
+  return adminPlayerDirectory.filter((player) => normalizedSearchText([
+    player.name,
+    player.email,
+    player.accountLabel,
+    player.accountType,
+    player.level,
+    player.id
+  ].filter(Boolean).join(" ")).includes(query));
+}
+
 function setPriceForm({ days, start, end, price }) {
   const daysInput = document.querySelector("#priceDays");
   const startInput = document.querySelector("#priceStart");
@@ -3363,22 +5323,44 @@ function splitPriceRuleByOverlap(rule, newRule) {
 
   const pieces = [];
   if (ruleStart < newStart) {
-    pieces.push({ ...rule, end: newRule.start });
+    pieces.push({ ...rule, id: `${rule.id}-before-${newStart}`, end: newRule.start });
   }
   if (ruleEnd > newEnd) {
-    pieces.push({ ...rule, start: newRule.end });
+    pieces.push({ ...rule, id: `${rule.id}-after-${newEnd}`, start: newRule.end });
   }
   return pieces;
 }
 
-function savePriceRule(courtId) {
+async function savePriceRule(courtId) {
   if (!courts.some((court) => court.id === courtId)) return false;
   const days = document.querySelector("#priceDays")?.value || "Po-Pa";
   const start = document.querySelector("#priceStart")?.value || club.open;
   const end = document.querySelector("#priceEnd")?.value || club.close;
   const price = Number(String(document.querySelector("#priceAmount")?.value || "0").replace(/[^\d.]/g, ""));
-  if (timeToMinutes(end) <= timeToMinutes(start) || !price) return false;
-  const newRule = { court: courtId, days, start, end, price };
+  if (timeToMinutes(end) <= timeToMinutes(start) || !price) {
+    lastActionMessage = "Zadej platny casovy usek a cenu.";
+    return false;
+  }
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/courts/${courtId}/price-rules`, {
+        method: "POST",
+        body: JSON.stringify({
+          dayKey: platformPriceDayKey(days),
+          startTime: start,
+          endTime: end,
+          priceMinor: Math.round(price * 100)
+        })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = `Cena ${formatMoney(price)}/h pro ${days} ${start}-${end} je ulozena.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
+  const newRule = { id: `local-price-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, court: courtId, days, start, end, price };
   courtPriceRules = courtPriceRules
     .flatMap((rule) => splitPriceRuleByOverlap(rule, newRule))
     .filter((rule) => timeToMinutes(rule.end) > timeToMinutes(rule.start));
@@ -3392,16 +5374,72 @@ function savePriceRule(courtId) {
   return true;
 }
 
-function saveCourtSettings(courtId) {
+async function removePriceRule(courtId, ruleId) {
+  const rule = courtPriceRules.find((item) => item.id === ruleId && item.court === courtId);
+  if (!rule) {
+    lastActionMessage = "Cenovy usek uz neexistuje.";
+    return false;
+  }
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/courts/${courtId}/price-rules/${ruleId}`, { method: "DELETE" });
+      await refreshPlatformReservations();
+      lastActionMessage = `Cenovy usek ${rule.days} ${rule.start}-${rule.end} byl odebran.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.code === "price_rule_not_found" ? "Cenovy usek uz byl odebran." : error.message;
+      return false;
+    }
+  }
+  courtPriceRules = courtPriceRules.filter((item) => item.id !== ruleId);
+  persistData();
+  lastActionMessage = `Cenovy usek ${rule.days} ${rule.start}-${rule.end} byl odebran.`;
+  return true;
+}
+
+async function saveCourtSettings(courtId) {
   const court = courts.find((item) => item.id === courtId);
   if (!court) return createCourtSettings();
-  const name = document.querySelector("#courtNameInput")?.value?.trim();
+  const name = document.querySelector("#courtNameInput")?.value?.trim() || "";
   const surface = document.querySelector("#courtSurfaceInput")?.value || court.surface;
   const color = document.querySelector("#courtColorInput")?.value?.trim() || courtSurfaceColor(surface);
   const open = document.querySelector("#clubOpenInput")?.value?.trim();
   const close = document.querySelector("#clubCloseInput")?.value?.trim();
   const photo = document.querySelector("#courtPhotoUrlInput")?.value?.trim();
-  if (name) court.name = name;
+  if (!name) {
+    lastActionMessage = "Zadej nazev kurtu.";
+    return false;
+  }
+  if (!/^#[0-9a-f]{6}$/i.test(color)) {
+    lastActionMessage = "Barvu zadej ve formatu #RRGGBB.";
+    return false;
+  }
+  if (!open || !close || timeToMinutes(close) <= timeToMinutes(open)) {
+    lastActionMessage = "Zavirani kurtu musi byt pozdeji nez otevreni.";
+    return false;
+  }
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/courts/${courtId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name,
+          surface: platformSurfaceCode(surface),
+          color,
+          photoUrl: photo || courtPhoto,
+          openTime: open,
+          closeTime: close
+        })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = `${name} je ulozeny a zmena je viditelna vsem hracum.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
+  court.name = name;
   court.surface = surface;
   if (color) court.color = color;
   if (photo) court.photo = photo;
@@ -3415,13 +5453,52 @@ function saveCourtSettings(courtId) {
   return true;
 }
 
-function createCourtSettings() {
+async function createCourtSettings() {
   const surface = document.querySelector("#courtSurfaceInput")?.value || "Antuka";
   const name = document.querySelector("#courtNameInput")?.value?.trim() || `Kurt ${courts.length + 1}`;
   const color = document.querySelector("#courtColorInput")?.value?.trim() || courtSurfaceColor(surface);
   const open = document.querySelector("#clubOpenInput")?.value?.trim();
   const close = document.querySelector("#clubCloseInput")?.value?.trim();
   const photo = document.querySelector("#courtPhotoUrlInput")?.value?.trim() || courtPhoto;
+  if (!/^#[0-9a-f]{6}$/i.test(color)) {
+    lastActionMessage = "Barvu zadej ve formatu #RRGGBB.";
+    return false;
+  }
+  if (!open || !close || timeToMinutes(close) <= timeToMinutes(open)) {
+    lastActionMessage = "Zavirani kurtu musi byt pozdeji nez otevreni.";
+    return false;
+  }
+  if (platformContext.enabled) {
+    try {
+      const result = await platformRequest(`/api/v2/clubs/${platformContext.clubId}/courts`, {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          surface: platformSurfaceCode(surface),
+          color,
+          photoUrl: photo,
+          openTime: open,
+          closeTime: close
+        })
+      });
+      const defaultPrice = Number(String(document.querySelector("#courtBasePriceInput")?.value || "180").replace(/\D/g, "")) || 180;
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/courts/${result.court.id}/price-rules`, {
+        method: "POST",
+        body: JSON.stringify({
+          dayKey: "all",
+          startTime: open,
+          endTime: close,
+          priceMinor: defaultPrice * 100
+        })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = `${name} byl pridan a je dostupny v rezervacich.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const id = nextCourtId();
   courts.push({
     id,
@@ -3433,7 +5510,7 @@ function createCourtSettings() {
     reservations: []
   });
   const defaultPrice = Number(String(document.querySelector("#courtBasePriceInput")?.value || "180").replace(/\D/g, "")) || 180;
-  courtPriceRules.push({ court: id, days: "Po-Ne", start: club.open, end: club.close, price: defaultPrice });
+  courtPriceRules.push({ id: `local-price-${id}-default`, court: id, days: "Po-Ne", start: club.open, end: club.close, price: defaultPrice });
   if (open && close && timeToMinutes(close) > timeToMinutes(open)) {
     club.open = open;
     club.close = close;
@@ -3443,9 +5520,25 @@ function createCourtSettings() {
   return true;
 }
 
-function removeCourt(courtId) {
+async function removeCourt(courtId) {
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/courts/${courtId}`, { method: "DELETE" });
+      await refreshPlatformReservations();
+      lastActionMessage = "Kurt byl odebran a zmena je viditelna vsem hracum.";
+      return true;
+    } catch (error) {
+      if (error.code === "last_court") lastActionMessage = "Klub musi mit alespon jeden aktivni kurt.";
+      else if (error.code === "court_has_reservations") lastActionMessage = "Kurt ma aktivni rezervace. Nejdrive je presun nebo zrus.";
+      else lastActionMessage = error.message;
+      return false;
+    }
+  }
   const index = courts.findIndex((court) => court.id === courtId);
-  if (index < 0 || courts.length <= 1) return false;
+  if (index < 0 || courts.length <= 1) {
+    lastActionMessage = "Klub musi mit alespon jeden aktivni kurt.";
+    return false;
+  }
   courts.splice(index, 1);
   courtPriceRules = courtPriceRules.filter((rule) => rule.court !== courtId);
   syncReservationCourtReferences();
@@ -3453,7 +5546,7 @@ function removeCourt(courtId) {
   return true;
 }
 
-function saveSpecialOccupancy() {
+async function saveSpecialOccupancy() {
   const typeValue = document.querySelector("#specialTypeInput")?.value || "turnaj";
   const type = specialOccupancyTypes.find((item) => item.type === typeValue) || specialOccupancyTypes[0];
   const courtId = document.querySelector("#specialCourtInput")?.value || "all";
@@ -3462,8 +5555,31 @@ function saveSpecialOccupancy() {
   const title = document.querySelector("#specialTitleInput")?.value?.trim() || type.label;
   const note = document.querySelector("#specialNoteInput")?.value?.trim() || `${type.label}: bezna rezervace neni dostupna.`;
   if (timeToMinutes(end) <= timeToMinutes(start)) return false;
-  const isoDate = selectedBookingIsoDate();
+  const isoDate = document.querySelector("#specialDateInput")?.value || selectedBookingIsoDate();
   const targets = courtId === "all" ? courts : courts.filter((court) => court.id === courtId);
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/court-blocks`, {
+        method: "POST",
+        body: JSON.stringify({
+          courtIds: targets.map((court) => court.id),
+          date: isoDate,
+          start,
+          end,
+          blockType: type.type === "turnaj" ? "tournament" : type.type,
+          title,
+          note,
+          color: type.color
+        })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = `${title} blokuje ${targets.length} ${targets.length === 1 ? "kurt" : "kurty"}.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.code === "booking_conflict" ? "Nektery vybrany kurt je v tomto case uz obsazeny." : error.message;
+      return false;
+    }
+  }
   targets.forEach((court) => {
     court.reservations = court.reservations.filter((reservation) =>
       reservation.isoDate !== isoDate ||
@@ -3486,7 +5602,7 @@ function saveSpecialOccupancy() {
   return true;
 }
 
-function saveAdminEvent() {
+async function saveAdminEvent() {
   if (state.role !== "admin") return false;
   const title = document.querySelector("#eventTitleInput")?.value?.trim() || "Nova klubova akce";
   const eventDate = dateFromDateInput(document.querySelector("#eventDateInput")?.value || dateInputValue(appToday));
@@ -3497,9 +5613,34 @@ function saveAdminEvent() {
   const detail = document.querySelector("#eventDetailInput")?.value?.trim() || "Detail akce doplni spravce.";
   const visual = document.querySelector("#eventVisualInput")?.value || "rackets";
   const customImage = document.querySelector("#eventImageUrlInput")?.value?.trim();
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/events`, {
+        method: "POST",
+        body: JSON.stringify({
+          eventType: visual === "singles" || visual === "doubles" ? "tournament" : visual === "rackets" || visual === "shoes" ? "demo" : "club",
+          title,
+          detail,
+          date: dateToIso(eventDate),
+          start,
+          end,
+          feeLabel: fee,
+          imageUrl: customImage || eventThumbnail(visual).image
+        })
+      });
+      await refreshPlatformEvents();
+      lastActionMessage = `${title} je publikovana a hraci dostali oznameni.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const event = {
     id: `${visual}-${Date.now()}`,
     isoDate: dateToIso(eventDate),
+    startTime: start,
+    endTime: end,
     thumbnail: customImage || visual,
     status: "published",
     date: weekdayCodes[eventDate.getDay()] || "Akce",
@@ -3516,24 +5657,70 @@ function saveAdminEvent() {
   return true;
 }
 
-function saveAdminEventDetails(eventId) {
+async function saveAdminEventDetails(eventId) {
   const event = events.find((item) => item.id === eventId);
   if (!event) return false;
   const title = document.querySelector("#adminEventTitleInput")?.value?.trim();
-  const meta = document.querySelector("#adminEventMetaInput")?.value?.trim();
+  const isoDate = document.querySelector("#adminEventDateInput")?.value;
+  const start = document.querySelector("#adminEventStartInput")?.value;
+  const end = document.querySelector("#adminEventEndInput")?.value;
   const fee = document.querySelector("#adminEventFeeInput")?.value?.trim();
   const thumbnail = document.querySelector("#adminEventThumbInput")?.value;
   const customImage = document.querySelector("#adminEventImageUrlInput")?.value?.trim();
-  const registered = document.querySelector("#adminEventRegisteredInput")?.value;
   const history = document.querySelector("#adminEventHistoryInput")?.value?.trim();
+  const detail = document.querySelector("#adminEventDetailInput")?.value?.trim() || event.detail || "";
+  if (!title || !isoDate || !start || !end || timeToMinutes(end) <= timeToMinutes(start)) {
+    lastActionMessage = "Zkontrolujte nazev, datum a cas akce.";
+    return false;
+  }
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/events/${eventId}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          eventType: event.eventType || "club",
+          title,
+          detail,
+          date: isoDate,
+          start,
+          end,
+          feeLabel: fee || "Zdarma",
+          capacity: event.capacity || null,
+          imageUrl: customImage || eventThumbnail(thumbnail).image
+        })
+      });
+      await refreshPlatformEvents();
+      lastActionMessage = "Akce byla ulozena.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   if (title) event.title = title;
-  if (meta) event.meta = meta;
+  event.isoDate = isoDate;
+  event.startTime = start;
+  event.endTime = end;
+  event.meta = `${formatPortalDate(dateFromIso(isoDate))} ${start}-${end}`;
+  event.detail = detail;
   if (fee) event.fee = fee;
   if (customImage || thumbnail) event.thumbnail = customImage || thumbnail;
-  if (typeof registered === "string") {
-    event.registered = registered.split("\n").map((item) => item.trim()).filter(Boolean);
-  }
   if (history) event.history = history;
+  persistData();
+  return true;
+}
+
+async function dismissPlatformNotification(notificationId) {
+  if (!notificationId) return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/me/notifications/${notificationId}/dismiss`, { method: "POST" });
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
+  replaceArray(notifications, notifications.filter((item) => item.id !== notificationId));
   persistData();
   return true;
 }
@@ -3554,13 +5741,35 @@ function updatePlayerDiscount(input) {
   document.querySelector("#finalPriceValue")?.replaceChildren(document.createTextNode(`${formatMoney(finalHourly)}/h`));
 }
 
-function saveAdminPlayer(playerId) {
+async function saveAdminPlayer(playerId) {
   const player = adminPlayerDirectory.find((item) => item.id === playerId);
   if (!player) return false;
   const reason = document.querySelector("#discountReasonInput")?.value?.trim();
   const note = document.querySelector("#adminNoteInput")?.value?.trim();
   if (reason) player.discountReason = reason;
   if (note) player.adminNote = note;
+  if (platformContext.enabled) {
+    const membershipId = platformContext.membersByPersona.get(playerId);
+    if (!membershipId) {
+      lastActionMessage = "Hrac nema propojene klubove clenstvi.";
+      return false;
+    }
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/members/${membershipId}/profile`, {
+        method: "PUT",
+        body: JSON.stringify({
+          accountType: player.accountType || "club",
+          baseDiscountPct: Number(player.baseDiscount || 0),
+          discountReason: reason || player.discountReason || "",
+          adminNote: note || player.adminNote || ""
+        })
+      });
+      lastActionMessage = `${player.name}: profil a sleva jsou ulozene.`;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   persistData();
   return true;
 }
@@ -3586,8 +5795,8 @@ function initialsFromName(name = "") {
   return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : (parts[0] || "H").slice(0, 2)).toUpperCase();
 }
 
-function createAdminPlayerFromModal() {
-  if (state.role !== "admin") return false;
+async function createAdminPlayerFromModal() {
+  if (!isPrimaryClubAdmin()) return false;
   const name = document.querySelector("#newPlayerNameInput")?.value?.trim();
   const email = document.querySelector("#newPlayerEmailInput")?.value?.trim().toLowerCase();
   const password = document.querySelector("#newPlayerPasswordInput")?.value?.trim();
@@ -3600,10 +5809,39 @@ function createAdminPlayerFromModal() {
     return false;
   }
   const accountType = document.querySelector("#newPlayerTypeInput")?.value || "club";
+  const role = document.querySelector("#newPlayerRoleInput")?.value || "player";
   const gender = document.querySelector("#newPlayerGenderInput")?.value || "male";
   const credit = Number(document.querySelector("#newPlayerCreditInput")?.value || 0);
   const baseDiscount = accountType === "guest" ? 0 : Number(document.querySelector("#newPlayerDiscountInput")?.value || 0);
   const id = slugifyPlayerId(email.split("@")[0] || name);
+  let platformMember = null;
+  if (platformContext.enabled) {
+    try {
+      const result = await platformRequest(`/api/v2/clubs/${platformContext.clubId}/members`, {
+        method: "POST",
+        body: JSON.stringify({ displayName: name, email, password, role, accountType, baseDiscountPct: baseDiscount })
+      });
+      platformMember = result.member;
+      if (role === "player" && credit > 0) {
+        await platformRequest(`/api/v2/clubs/${platformContext.clubId}/members/${platformMember.membershipId}/credit-topups`, {
+          method: "POST",
+          body: JSON.stringify({
+            amountMinor: Math.round(credit * 100),
+            paymentMethod: "other",
+            note: "Pocatecni kredit pri zalozeni hrace",
+            idempotencyKey: `new-member-${platformMember.membershipId}`
+          })
+        });
+      }
+    } catch (error) {
+      lastActionMessage = error.code === "email_exists" ? "Tento e-mail uz ma ucet na platforme; pozvani do dalsiho klubu doplnime oddelene." : error.message;
+      return false;
+    }
+  }
+  if (role !== "player") {
+    lastActionMessage = `${name} byl zalozen jako ${role === "manager" ? "spravce klubu" : role} a muze se prihlasit.`;
+    return true;
+  }
   const player = {
     id,
     name,
@@ -3639,7 +5877,9 @@ function createAdminPlayerFromModal() {
   };
   players.push(player);
   adminPlayerDirectory.push(player);
+  if (platformMember) platformContext.membersByPersona.set(id, platformMember.membershipId);
   persistData();
+  lastActionMessage = `${name} byl zalozen a muze se prihlasit.`;
   return true;
 }
 
@@ -3666,17 +5906,166 @@ function sendAdminInvite(playerName = "", court = "", time = "") {
   return true;
 }
 
-function saveCreditBonusRule(packageName = "") {
-  const rule = creditBonusRules.find((item) => item.name === packageName) || creditBonusRules[0];
-  if (!rule) return false;
+async function saveCreditBonusRule(packageName = "") {
+  let rule = creditBonusRules.find((item) => item.id === packageName || item.name === packageName);
   const name = document.querySelector("#creditBonusNameInput")?.value?.trim();
-  const paid = Number(document.querySelector("#creditBonusPaidInput")?.value || rule.paid || 0);
-  const bonus = Number(document.querySelector("#creditBonusBonusInput")?.value || rule.bonus || 0);
+  const paid = Number(document.querySelector("#creditBonusPaidInput")?.value || rule?.paid || 0);
+  const bonus = Number(document.querySelector("#creditBonusBonusInput")?.value || rule?.bonus || 0);
   const note = document.querySelector("#creditBonusNoteInput")?.value?.trim();
-  if (name) rule.name = name;
-  if (paid) rule.paid = paid;
-  if (bonus >= 0) rule.bonus = bonus;
-  if (note) rule.note = note;
+  if (!name || !Number.isFinite(paid) || paid <= 0 || !Number.isFinite(bonus) || bonus < 0) {
+    lastActionMessage = "Vypln nazev, kladnou hranici platby a nezaporny bonus.";
+    return false;
+  }
+  const duplicate = creditBonusRules.find((item) => item !== rule && Number(item.paid) === paid);
+  if (duplicate) {
+    lastActionMessage = `Pro castku ${formatMoney(paid)} uz pravidlo existuje.`;
+    return false;
+  }
+  if (platformContext.enabled) {
+    try {
+      const endpoint = rule
+        ? `/api/v2/clubs/${platformContext.clubId}/credit-rules/${rule.id}`
+        : `/api/v2/clubs/${platformContext.clubId}/credit-rules`;
+      const result = await platformRequest(endpoint, {
+        method: rule ? "PUT" : "POST",
+        body: JSON.stringify({
+          label: name,
+          thresholdMinor: Math.round(paid * 100),
+          bonusMinor: Math.round(bonus * 100),
+          note: note || "Bonus podle pravidel klubu."
+        })
+      });
+      if (!rule) {
+        rule = { id: result.rule.id, name, paid, bonus, note: note || "Bonus podle pravidel klubu." };
+        creditBonusRules.push(rule);
+      } else {
+        Object.assign(rule, { name, paid, bonus, note: note || rule.note });
+      }
+      creditBonusRules.sort((left, right) => Number(left.paid) - Number(right.paid));
+      lastActionMessage = `Pravidlo ${formatMoney(paid)} + ${formatMoney(bonus)} bonus je ulozene.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
+  if (!rule) {
+    rule = { id: `credit-rule-${Date.now()}`, name, paid, bonus, note: note || "Bonus podle pravidel klubu." };
+    creditBonusRules.push(rule);
+  } else {
+    rule.name = name;
+    rule.paid = paid;
+    rule.bonus = bonus;
+    rule.note = note || rule.note;
+  }
+  creditBonusRules.sort((left, right) => Number(left.paid) - Number(right.paid));
+  lastActionMessage = `Pravidlo ${formatMoney(paid)} + ${formatMoney(bonus)} bonus je ulozene.`;
+  persistData();
+  return true;
+}
+
+async function deleteCreditBonusRule(ruleId = "") {
+  const index = creditBonusRules.findIndex((item) => item.id === ruleId || item.name === ruleId);
+  if (index < 0) return false;
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/credit-rules/${creditBonusRules[index].id}`, { method: "DELETE" });
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
+  creditBonusRules.splice(index, 1);
+  persistData();
+  return true;
+}
+
+async function applyManualCredit(playerId = "") {
+  if (state.role !== "admin") return false;
+  const player = playerRecordById(playerId);
+  const preview = manualCreditPreview(document.querySelector("#manualCreditAmountInput")?.value);
+  const method = document.querySelector("#manualCreditMethodInput")?.value || "cash";
+  const note = document.querySelector("#manualCreditNoteInput")?.value?.trim() || "Rucni dobiti spravcem";
+  const operationKey = document.querySelector("#manualCreditOperationInput")?.value || "";
+  if (!player || preview.paid <= 0) {
+    lastActionMessage = "Vyber hrace a zadej kladnou zaplacenou castku.";
+    return false;
+  }
+  if (!operationKey || creditTransactions.some((transaction) => transaction.idempotencyKey === operationKey)) {
+    lastActionMessage = "Tato platba uz byla zpracovana.";
+    return false;
+  }
+  if (platformContext.enabled) {
+    const membershipId = platformContext.membersByPersona.get(playerId);
+    if (!membershipId) {
+      lastActionMessage = "Hrac nema propojene klubove clenstvi.";
+      return false;
+    }
+    try {
+      const result = await platformRequest(`/api/v2/clubs/${platformContext.clubId}/members/${membershipId}/credit-topups`, {
+        method: "POST",
+        body: JSON.stringify({
+          amountMinor: Math.round(preview.paid * 100),
+          paymentMethod: method,
+          note,
+          idempotencyKey: operationKey
+        })
+      });
+      player.paidCredit = Number(result.balance.paidMinor || 0) / 100;
+      player.bonusCredit = Number(result.balance.bonusMinor || 0) / 100;
+      player.credit = Number(result.balance.totalMinor || 0) / 100;
+      creditTransactions.push({
+        id: result.transaction.id,
+        playerId: player.id,
+        type: "topup",
+        paid: Number(result.transaction.paidMinor || 0) / 100,
+        bonus: Number(result.transaction.bonusMinor || 0) / 100,
+        total: (Number(result.transaction.paidMinor || 0) + Number(result.transaction.bonusMinor || 0)) / 100,
+        balanceAfter: player.credit,
+        ruleId: result.transaction.rule?.id || "",
+        ruleName: result.transaction.rule?.label || "Bez bonusu",
+        method,
+        note,
+        createdBy: "Spravce",
+        idempotencyKey: operationKey,
+        createdAt: new Date().toISOString()
+      });
+      lastActionMessage = `${player.name}: pripsano ${formatMoney(result.transaction.paidMinor / 100)} + ${formatMoney(result.transaction.bonusMinor / 100)} bonus.`;
+      return true;
+    } catch (error) {
+      lastActionMessage = error.code === "duplicate_topup" ? "Tato platba uz byla zpracovana." : error.message;
+      return false;
+    }
+  }
+  player.paidCredit = Number(player.paidCredit || 0) + preview.paid;
+  player.bonusCredit = Number(player.bonusCredit || 0) + preview.bonus;
+  player.credit = totalCredit(player);
+  creditTransactions.push({
+    id: `credit-${Date.now()}-${player.id}`,
+    playerId: player.id,
+    type: "topup",
+    paid: preview.paid,
+    bonus: preview.bonus,
+    total: preview.total,
+    balanceAfter: player.credit,
+    ruleId: preview.rule?.id || "",
+    ruleName: preview.rule?.name || "Bez bonusu",
+    method,
+    note,
+    createdBy: "Spravce",
+    idempotencyKey: operationKey,
+    createdAt: new Date().toISOString()
+  });
+  notifications.push({
+    id: `credit-topup-${Date.now()}-${player.id}`,
+    type: "credit",
+    recipients: [player.id],
+    title: "Kredit pripsan",
+    meta: `${formatMoney(preview.paid)} zaplaceno${preview.bonus ? ` + ${formatMoney(preview.bonus)} bonus` : ""}. Novy zustatek ${formatMoney(player.credit)}.`,
+    status: "Hotovo"
+  });
+  if (player.id === currentPersonaId()) setCurrentPersona(player.id);
+  lastActionMessage = `${player.name}: pripsano ${formatMoney(preview.paid)} + ${formatMoney(preview.bonus)} bonus.`;
   persistData();
   return true;
 }
@@ -3926,7 +6315,21 @@ function confirmGameProposal(index = 0) {
   return true;
 }
 
-function confirmGameProposalById(proposalId) {
+async function confirmGameProposalById(proposalId) {
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${proposalId}/respond`, {
+        method: "POST",
+        body: JSON.stringify({ response: "accept" })
+      });
+      await refreshPlatformReservations();
+      lastActionMessage = "Ucast je potvrzena.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.message;
+      return false;
+    }
+  }
   const index = gameProposals.findIndex((proposal) => proposal.id === proposalId);
   if (index < 0) return false;
   const ok = confirmGameProposal(index);
@@ -4040,6 +6443,7 @@ function render() {
   applyAvatarPhotos(content);
   updateRoleSwitcherVisibility();
   updateAppBadge();
+  if (activeHelpTour) window.setTimeout(showHelpTourStep, 0);
 }
 
 function legacyRenderNavigationA() {
@@ -4085,7 +6489,7 @@ function legacyRenderNavigationA() {
   const creditBadge = document.querySelector("#creditBadge");
   if (creditBadge) creditBadge.textContent = state.role === "guest" ? "Neprihlasen" : formatMoney(currentUser.credit, currentUser.currency);
   const headerName = document.querySelector(".topbar .muted");
-  if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? "Spravce klubu" : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
+  if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? adminHeaderLabel() : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
   const loginInitials = document.querySelector("#loginButton span");
   if (loginInitials) loginInitials.innerHTML = state.role === "guest" ? "H" : state.role === "admin" ? "S" : state.role === "stringer" ? "V" : state.role === "seller" ? "O" : avatarContent(currentUser);
   const clubHoursLabel = document.querySelector("#clubHoursLabel");
@@ -4100,7 +6504,7 @@ function legacyRenderNavigationB() {
         { view: "booking", label: "Rezervace" },
         { view: "players", label: "Hraci" },
         { view: "events", label: "Akce" },
-        { view: "orders", label: "Objednavky", badge: playerOrders.length, image: "assets/order-cart-icon.png" },
+        { view: "orders", label: "Objednavky", badge: visiblePlayerOrders().filter(orderNeedsAction).length, image: "assets/order-cart-icon.png" },
         { view: "profile", label: "Profil" }
       ]
     : limitedRole
@@ -4136,7 +6540,7 @@ function legacyRenderNavigationB() {
   const creditBadge = document.querySelector("#creditBadge");
   if (creditBadge) creditBadge.textContent = state.role === "guest" ? "Neprihlasen" : formatMoney(currentUser.credit, currentUser.currency);
   const headerName = document.querySelector(".topbar .muted");
-  if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? "Spravce klubu" : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
+  if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? adminHeaderLabel() : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
   const loginInitials = document.querySelector("#loginButton span");
   if (loginInitials) loginInitials.innerHTML = state.role === "guest" ? "H" : state.role === "admin" ? "S" : state.role === "stringer" ? "V" : state.role === "seller" ? "O" : avatarContent(currentUser);
   const clubHoursLabel = document.querySelector("#clubHoursLabel");
@@ -4188,7 +6592,7 @@ function legacyRenderHome() {
 function renderGuestHome() {
   return `
     <section class="view">
-      <section class="section guest-entry">
+      <section class="section guest-entry" data-help-target="guest-entry">
         <div class="section-head">
           <div>
             <h2>Prihlaseni do portalu</h2>
@@ -4202,18 +6606,18 @@ function renderGuestHome() {
         <div class="section-head">
           <div>
             <h2>Hostovska rezervace</h2>
-            <p class="muted">Minimum kroku: telefon nebo e-mail, jednorazovy kod, vyber slotu a QR zaloha.</p>
+            <p class="muted">Minimum kroku: telefon nebo e-mail, jednorazovy kod, vyber slotu a uhrada podle pravidel klubu.</p>
           </div>
           <span class="pill">bez uctu</span>
         </div>
         <div class="guest-steps">
           <div><strong>1</strong><span>Kontakt</span></div>
           <div><strong>2</strong><span>Slot</span></div>
-          <div><strong>3</strong><span>QR</span></div>
+          <div><strong>3</strong><span>Klub</span></div>
         </div>
         <button class="secondary-button" data-action="guest">Zacit jako host</button>
       </section>
-      ${courtDayOverview()}
+      <div data-help-target="guest-courts">${courtDayOverview()}</div>
     </section>
   `;
 }
@@ -4223,7 +6627,7 @@ function renderStringerHome() {
   return `
     <section class="view">
       <section class="section stringer-entry">
-        <div class="section-head">
+        <div class="section-head" data-help-target="service-work">
           <div>
             <h2>Vypletac raket</h2>
             <p class="muted">Sbery raket, terminy do dalsi rezervace a zpravy hracum.</p>
@@ -4240,8 +6644,8 @@ function renderStringerHome() {
                 <small>${order.note}</small>
               </span>
               <div class="inline-actions">
-                ${order.status === "waiting_dropoff" ? `<button class="secondary-button" data-confirm="stringing-pickup" data-stringing="${order.id}">Prevzato</button>` : ""}
-                ${order.status === "with_stringer" ? `<button class="primary-button" data-confirm="stringing-ready" data-stringing="${order.id}">Vraceno klubu</button>` : ""}
+                ${order.status === "at_club" ? `<button class="secondary-button" data-confirm="stringing-pickup" data-stringing="${order.id}">Prevzit z klubu</button>` : ""}
+                ${order.status === "with_stringer" ? `<button class="primary-button" data-confirm="stringing-returned" data-stringing="${order.id}">Vratit klubu</button>` : ""}
               </div>
             </article>
           `).join("")}
@@ -4267,7 +6671,7 @@ function renderSellerHome() {
   return `
     <section class="view">
       <section class="section seller-entry">
-        <div class="section-head">
+        <div class="section-head" data-help-target="service-work">
           <div>
             <h2>Partner obchodu</h2>
             <p class="muted">Baliky objednavek, akce v klubu a poptavky podle hlasovani hracu.</p>
@@ -4383,7 +6787,7 @@ function legacyGameProposalSection() {
             <p>${proposal.state}</p>
             <small>${proposal.note}</small>
             <div class="inline-actions">
-              <button class="secondary-button" data-action="counter">Resit protinavrh</button>
+          <button class="secondary-button" data-action="counter" data-proposal-id="${proposal.id}">Navrhnout jiny cas</button>
               <button class="primary-button" data-confirm="invite-game" data-proposal="${index}">${isOwner ? "Vytvorit rezervaci" : "Potvrdit ucast"}</button>
             </div>
           </article>
@@ -4446,7 +6850,7 @@ function myReservationSummary(showCalendar = true) {
   const reservations = visibleReservations();
   return `
     <section class="section">
-      <div class="section-head">
+      <div class="section-head" data-help-target="player-reservations">
         <div>
           <h2 class="title-with-icon"><span class="ui-icon reservation-icon-small"></span>Moje rezervace</h2>
           <p class="muted">Tydni prehled, stala sestava a rychla rezervace z kalendare.</p>
@@ -4548,7 +6952,7 @@ function calendarDay(day, joined) {
 function courtDayOverview() {
   return `
     <section class="section">
-      <div class="section-head">
+      <div class="section-head" data-help-target="guest-courts-heading">
         <div>
           <h2 class="title-with-icon"><span class="ui-icon court-icon"></span>Cely den podle kurtu</h2>
           <p class="muted">${club.open}-${club.close}, pulhodinove bloky</p>
@@ -4679,7 +7083,7 @@ function renderBooking() {
   const selectedDateText = formatPortalDate(selectedDate, false);
   return `
     <section class="view booking-view">
-      <section class="section">
+      <section class="section" data-help-target="booking-date">
         <div class="section-head">
           <div>
             <h2>Rezervace kurtu</h2>
@@ -4693,7 +7097,7 @@ function renderBooking() {
       ${monthCalendar("Rezervacni kalendar")}
 
       <section class="section schedule-section">
-        <div class="section-head compact-head">
+        <div class="section-head compact-head" data-help-target="booking-courts">
           <h2>Kurty pro ${selectedDateText}</h2>
           <span class="pill">30 min</span>
         </div>
@@ -4797,7 +7201,7 @@ function renderPlayers() {
         <button class="primary-button" data-action="find-player">Vytvorit poptavku</button>
       </section>
       <section class="section seeking-section">
-        <div class="section-head">
+        <div class="section-head" data-help-target="player-searches">
           <div>
             <h2 class="title-with-icon"><span class="ui-icon players-seeking-icon"></span>Hledaji hrace</h2>
             <p class="muted">Aktivni poptavky na single, double a doplneni sestavy.</p>
@@ -4807,7 +7211,7 @@ function renderPlayers() {
         ${seekingPlayers.length ? playerList(seekingPlayers, "seeking-list") : `<div class="history-card compact-empty"><strong>Nikdo ted nehleda</strong><small>Jakmile nekdo vytvori poptavku, objevi se tady.</small></div>`}
       </section>
       <section class="section">
-        <div class="section-head">
+        <div class="section-head" data-help-target="player-friends">
           <h2>Moji kamaradi</h2>
           <span class="pill handshake">Podane ruce</span>
         </div>
@@ -4815,7 +7219,7 @@ function renderPlayers() {
       </section>
       <section class="section">
         <details class="club-players">
-          <summary>
+          <summary data-help-target="player-directory">
             <span>Hraci klubu</span>
             <b>${clubPlayers.length} hraci</b>
           </summary>
@@ -4851,7 +7255,7 @@ function renderEvents() {
     <section class="view">
       ${playerPollSection()}
       <section class="section">
-        <div class="section-head">
+        <div class="section-head" data-help-target="player-events">
           <div>
             <h2>Akce klubu</h2>
             <p class="muted">Detail, prihlaseni, pozvani pratel a historie turnaju.</p>
@@ -4864,11 +7268,12 @@ function renderEvents() {
       <section class="section">
         <div class="section-head">
           <div>
-            <h2>Turnaje</h2>
-            <p class="muted">Vysledky, fotky a odkazy na zaznamy.</p>
+            <h2>Historie akci a turnaju</h2>
+            <p class="muted">Probehle akce uz neprekazeji na Domu. Tady zustavaji vysledky, fotky a odkazy na zaznamy.</p>
           </div>
-          <span class="pill">archiv</span>
+          <span class="pill">${archivedEvents().length} v archivu</span>
         </div>
+        ${archivedEvents().length ? eventList(archivedEvents()) : ""}
         <div class="history-list">
           <article class="history-card">
             <strong>Jarni ctyrhra 2026</strong>
@@ -4920,7 +7325,7 @@ function playerPollSection() {
 function playerTournamentSection() {
   return `
     <section class="section">
-      <div class="section-head">
+      <div class="section-head" data-help-target="player-tournaments">
         <div>
           <h2 class="title-with-icon"><span class="ui-icon event-icon"></span>Turnaje</h2>
           <p class="muted">Single turnaje: prihlaseni do uzaverky, skupiny, pavouk a archiv vysledku.</p>
@@ -4988,7 +7393,7 @@ function legacyRenderProfile() {
         <div class="section-head">
           <div>
             <h2>Kredit a ceny</h2>
-          <p class="muted">Kredit se dobije QR platbou. Bonusovy kredit je evidovany zvlast, cena kurtu se pocita podle sazby a slevy hrace.</p>
+          <p class="muted">Kredit pripise spravce po prijeti penez klubem. Bonusovy kredit je evidovany zvlast.</p>
         </div>
           <span class="pill">${formatMoney(totalCredit(currentUser), currentUser.currency)}</span>
         </div>
@@ -5010,7 +7415,7 @@ function legacyRenderProfile() {
           <div class="utilization-bar"><i style="width:${loyalty.done}%"></i></div>
           <small>Stavajici vernostni sleva ${currentUser.loyaltyDiscount} %. Do dalsi urovne chybi ${nextMissingHours} h, odemkne se dalsich ${nextBonusGain} %.</small>
         </div>
-        <button class="primary-button" data-action="pay">Dobit kredit QR kodem</button>
+        <div class="profile-row"><span>Dobiti kreditu</span><span>u spravce klubu</span></div>
       </section>
 
       <section class="section">
@@ -5027,13 +7432,12 @@ function legacyRenderProfile() {
       </section>
 
       <section class="section">
-        <h2>Platby</h2>
+        <h2>Klubovy kredit</h2>
         <div class="profile-list">
-          <div class="profile-row"><span>Metoda platby</span><span class="pill">QR kod</span></div>
-          <div class="profile-row"><span>Placeni kurtu</span><span class="pill">pred / pri / po hre</span></div>
+          <div class="profile-row"><span>Dobiti</span><span class="pill">rucne spravcem</span></div>
+          <div class="profile-row"><span>Cena kurtu</span><span class="pill">odecte se z kreditu</span></div>
           <div class="profile-row"><span>Kredit klubu</span><span class="pill">840 Kc</span></div>
         </div>
-        <button class="primary-button" data-action="pay">Ukazat QR platbu</button>
       </section>
 
       <section class="section">
@@ -5074,6 +7478,7 @@ function renderHome() {
       ${notificationCenter()}
       ${gameProposalSection()}
       ${myReservationSummary()}
+      ${multiClubAgendaSection()}
       ${courtDayOverview()}
       <section class="section">
         <div class="section-head">
@@ -5093,7 +7498,7 @@ function renderPlayerOrders() {
   return `
     <section class="view">
       <section class="section orders-section">
-        <div class="section-head">
+        <div class="section-head" data-help-target="player-orders">
           <div>
             <h2>Moje objednavky</h2>
             <p class="muted">Veci pripravene k rezervaci, vyzvednuti na klubu nebo klubove akci.</p>
@@ -5114,7 +7519,7 @@ function renderPlayerOrders() {
         </div>
       </section>
       <section class="section soft">
-        <div class="section-head">
+        <div class="section-head" data-help-target="player-stringing">
           <div>
             <h2>Vyplety raket</h2>
             <p class="muted">Servis se automaticky posila vypletaci. Tady vidis, kde raketa je a kdy bude pripravena.</p>
@@ -5144,7 +7549,7 @@ function notificationCenter() {
   const attendanceNotice = visible.find((item) => item.type === "attendance" && item.status !== "Tvoje ucast potvrzena");
   const collapsed = state.collapsedSections.has("notifications");
   return `
-    <section class="section soft compact-panel notification-compact ${collapsed ? "is-collapsed" : ""}">
+    <section class="section soft compact-panel notification-compact ${collapsed ? "is-collapsed" : ""}" data-help-target="player-notifications">
       <div class="section-head compact-section-head">
         <div>
           <h2 class="title-with-icon"><span class="ui-icon notification-icon"></span>Oznameni</h2>
@@ -5172,7 +7577,7 @@ function gameProposalSection() {
   const collapsed = state.collapsedSections.has("proposals");
   const proposals = visibleGameProposals();
   return `
-    <section class="section compact-panel proposal-compact ${collapsed ? "is-collapsed" : ""}">
+    <section class="section compact-panel proposal-compact ${collapsed ? "is-collapsed" : ""}" data-help-target="player-proposals">
       <div class="section-head compact-section-head">
         <div>
           <h2 class="title-with-icon"><span class="ui-icon proposal-icon"></span>Moje navrhy na hru</h2>
@@ -5200,8 +7605,7 @@ function gameProposalSection() {
               </div>
               <small>${proposal.state}</small>
               <div class="inline-actions">
-                <button class="secondary-button" data-action="counter">Protinavrh</button>
-                <button class="primary-button" data-confirm="invite-game" data-proposal="${index}">${isOwner ? "Zkontrolovat" : "Potvrdit"}</button>
+                ${isOwner ? `<span class="status-pill">Ceka se na pozvane</span>` : `<button class="secondary-button" data-action="counter" data-proposal-id="${proposal.id}">Protinavrh</button><button class="primary-button" data-confirm="invite-game" data-proposal="${index}" data-proposal-id="${proposal.id}">Potvrdit</button>`}
               </div>
             </article>
           `;
@@ -5216,9 +7620,10 @@ function renderProfile() {
   const loyalty = loyaltyProgress(currentUser);
   const nextMissingHours = Math.max(0, loyalty.next.hours - currentUser.playedHours);
   const nextBonusGain = Math.max(0, loyalty.next.bonus - (currentUser.loyaltyDiscount || 0));
+  const myCreditHistory = playerCreditTransactions(currentPersonaId());
   return `
     <section class="view profile-redesign">
-      <section class="profile-summary-card">
+      <section class="profile-summary-card" data-help-target="player-profile-summary">
         <button class="avatar profile-avatar" data-action="photo" data-player="${currentPersonaId()}">${avatarContent(currentUser)}</button>
         <div>
           <p class="eyebrow">Profil hrace</p>
@@ -5228,7 +7633,7 @@ function renderProfile() {
         <button class="small-button" data-action="photo">Foto</button>
       </section>
 
-      <section class="section profile-wallet-card">
+      <section class="section profile-wallet-card" data-help-target="player-wallet">
         <div class="profile-metric-row">
           <span><small>Kredit</small><b>${formatMoney(totalCredit(currentUser), currentUser.currency)}</b></span>
           <span><small>Sleva</small><b>${currentUser.discount} %</b></span>
@@ -5248,15 +7653,29 @@ function renderProfile() {
           <div class="utilization-bar"><i style="width:${loyalty.done}%"></i></div>
           <small>Do dalsi urovne chybi ${nextMissingHours} h, odemkne se dalsich ${nextBonusGain} %.</small>
         </div>
-        <button class="primary-button" data-action="pay">Dobit kredit QR</button>
+        <div class="profile-row manual-credit-note"><span><strong>Dobiti kreditu</strong><small>Penize prijme klub a kredit pripise spravce podle bonusovych pravidel.</small></span><span class="pill">u spravce</span></div>
       </section>
 
-      <section class="section profile-grid-section">
+      <section class="section profile-grid-section" data-help-target="player-profile-settings">
         <div class="profile-mini-grid">
           <button class="profile-mini-card" data-action="attendance"><b>${state.attendanceRequired ? "ON" : "OFF"}</b><span>Potvrzeni ucasti</span></button>
           <button class="profile-mini-card" data-action="login"><b>@</b><span>Telefon / e-mail</span></button>
           <button class="profile-mini-card" data-view-link="orders"><b>${visiblePlayerOrders().length}</b><span>Objednavky</span></button>
-          <button class="profile-mini-card" data-action="pay"><b>QR</b><span>Platby</span></button>
+          <div class="profile-mini-card"><b>KC</b><span>Kredit pripisuje klub</span></div>
+        </div>
+      </section>
+
+      ${platformContext.enabled ? `<section class="section"><div class="section-head"><h2>Soukromi a propojeni</h2><span class="pill">GDPR</span></div><div class="profile-mini-grid"><button class="profile-mini-card" data-action="privacy"><b>${platformPrivacy.policyVersion || "EU"}</b><span>Souhlasy a data</span></button><button class="profile-mini-card" data-action="connections"><b>${(platformConnections.connections || []).filter((item) => item.status === "accepted").length}</b><span>Meziklubovi pratele</span></button><button class="profile-mini-card" data-action="privacy"><b>${platformNotificationPreferences.push_enabled === 0 ? "OFF" : "ON"}</b><span>Push a pripominky</span></button></div></section>` : ""}
+
+      <section class="section">
+        <div class="section-head"><h2>Historie kreditu</h2><span class="pill">${myCreditHistory.length}</span></div>
+        <div class="profile-list">
+          ${myCreditHistory.length ? myCreditHistory.map((transaction) => `
+            <div class="profile-row">
+              <span><strong>Dobiti ${formatMoney(transaction.paid)}</strong><small>${formatPortalDate(new Date(transaction.createdAt))} · ${transaction.method} · ${transaction.createdBy}</small></span>
+              <span><b>+${formatMoney(transaction.total)}</b><small>bonus ${formatMoney(transaction.bonus)}</small></span>
+            </div>
+          `).join("") : `<div class="profile-row"><span>Zatim zadne pohyby kreditu</span><span class="pill">0</span></div>`}
         </div>
       </section>
 
@@ -5311,7 +7730,7 @@ function renderNavigation() {
         { view: "booking", label: "Rezervace", iconKey: "booking" },
         { view: "players", label: "Hraci", iconKey: "players" },
         { view: "events", label: "Akce", iconKey: "events" },
-        { view: "orders", label: "Objednavky", iconKey: "orders", badge: playerOrders.length },
+        { view: "orders", label: "Objednavky", iconKey: "orders", badge: playerOrders.filter(orderNeedsAction).length },
         { view: "profile", label: "Profil", iconKey: "profile" }
       ]
     : limitedRole
@@ -5348,7 +7767,7 @@ function renderNavigation() {
   const creditBadge = document.querySelector("#creditBadge");
   if (creditBadge) creditBadge.textContent = state.role === "guest" ? "Neprihlasen" : formatMoney(currentUser.credit, currentUser.currency);
   const headerName = document.querySelector(".topbar .muted");
-  if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? "Spravce klubu" : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
+  if (headerName) headerName.textContent = state.role === "guest" ? "Hostovsky rezim" : state.role === "admin" ? adminHeaderLabel() : state.role === "stringer" ? "Vypletac raket" : state.role === "seller" ? "Partner obchodu" : `Ahoj, ${currentUser.name.split(" ")[0]}`;
   const loginInitials = document.querySelector("#loginButton span");
   if (loginInitials) loginInitials.innerHTML = state.role === "guest" ? "H" : state.role === "admin" ? "S" : state.role === "stringer" ? "V" : state.role === "seller" ? "O" : avatarContent(currentUser);
   const clubHoursLabel = document.querySelector("#clubHoursLabel");
@@ -5359,7 +7778,7 @@ function clubShopSection() {
   const myProducts = new Set(visiblePlayerOrders().map((order) => order.product));
   return `
     <section class="section shop-section">
-      <div class="section-head">
+      <div class="section-head" data-help-target="player-shop">
         <div>
           <h2 class="title-with-icon"><span class="ui-icon shop-icon"></span>Klubovy obchod</h2>
           <p class="muted">Objednavky mimo akce, k rezervaci nebo k vyzvednuti na klubu.</p>
@@ -5397,10 +7816,10 @@ function renderAdminOverview() {
   const todayLabel = formatPortalDate(appToday, false);
   return `
     <section class="view admin-view">
-      <section class="section admin-hero">
+      <section class="section admin-hero" data-help-target="admin-overview">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Spravce klubu</p>
+            <p class="eyebrow">${adminHeaderLabel()}</p>
             <h2>${club.name} dnes</h2>
             <p class="muted">Zivy prehled z aktualnich rezervaci, kurtu a objednavek pro ${todayLabel}.</p>
           </div>
@@ -5442,7 +7861,7 @@ function renderAdminOverview() {
       ${habitAlertsSection()}
 
       <section class="section">
-        <div class="section-head">
+        <div class="section-head" data-help-target="admin-courts">
           <h2>Kurty</h2>
           <button class="small-button" data-action="admin-court">Pridat</button>
         </div>
@@ -5607,7 +8026,7 @@ function renderAdminOrders() {
   return `
     <section class="view admin-view">
       <section class="section orders-section">
-        <div class="section-head">
+        <div class="section-head" data-help-target="admin-orders">
           <div>
             <h2>Objednavky</h2>
             <p class="muted">Vse, co musi klub nachystat: micky k rezervaci, vyplety, boty na vyzkouseni a veci k akcim.</p>
@@ -5645,7 +8064,7 @@ function renderAdminOrders() {
         </div>
       </section>
       <section class="section soft">
-        <div class="section-head">
+        <div class="section-head" data-help-target="admin-stringing">
           <div>
             <h2>Vyplety raket</h2>
             <p class="muted">Spravce vidi stav jen pro prehled. Prace se po objednani automaticky posila vypletaci.</p>
@@ -5662,6 +8081,8 @@ function renderAdminOrders() {
               </span>
               <div class="inline-actions">
                 <b>${order.handoff}</b>
+                ${order.status === "waiting_dropoff" ? `<button class="secondary-button" data-confirm="stringing-at-club" data-stringing="${order.id}">Klub prevzal raketu</button>` : ""}
+                ${order.status === "returned_to_club" ? `<button class="primary-button" data-confirm="stringing-ready" data-stringing="${order.id}">Nachystano na recepci</button>` : ""}
                 ${order.status === "ready_for_pickup" ? `<button class="secondary-button" data-confirm="stringing-delivered" data-stringing="${order.id}">Klub predal hraci</button>` : ""}
               </div>
             </article>
@@ -5709,7 +8130,7 @@ function lastMinuteSection() {
 function creditBonusSection() {
   return `
     <section class="section">
-      <div class="section-head">
+      <div class="section-head" data-help-target="admin-credit-bonus">
         <div>
           <h2>Bonus za dobiti kreditu</h2>
           <p class="muted">Kredit je penezenka. Sleva na kurt zustava v profilu hrace, bonus se eviduje oddelene.</p>
@@ -5718,10 +8139,10 @@ function creditBonusSection() {
       </div>
       <div class="package-list">
         ${creditBonusRules.map((rule) => `
-          <button class="package-card" data-action="credit-bonus" data-package="${rule.name}">
+          <button class="package-card" data-action="credit-bonus" data-package="${rule.id || rule.name}">
             <span>
               <strong>${rule.name}</strong>
-              <small>${rule.note}</small>
+              <small>Od ${formatMoney(rule.paid)} · ${rule.note}</small>
             </span>
             <b>+${formatMoney(rule.bonus)} bonus</b>
           </button>
@@ -5762,18 +8183,43 @@ function renderAdminReservations() {
   return `
     <section class="view admin-view">
       <section class="section">
-        <div class="section-head">
+        <div class="section-head" data-help-target="admin-reservation-create">
           <div>
             <h2>Sprava rezervaci</h2>
             <p class="muted">Rucni rezervace, storna, potvrzeni ucasti, nahradnici a hledani hracu.</p>
           </div>
-          <button class="small-button" data-action="admin-reservation">Nova</button>
+          <div class="inline-actions">
+            <button class="small-button" data-action="admin-reservation">Jednorazova</button>
+            <button class="small-button" data-action="admin-recurring">Trvala</button>
+          </div>
         </div>
         ${weekChooser()}
       </section>
 
-      <section class="section soft">
+      <section class="section recurring-series-section">
         <div class="section-head">
+          <div>
+            <h2>Trvale rezervace</h2>
+            <p class="muted">Sezonni serie a pocet zbyvajicich terminu.</p>
+          </div>
+          <span class="pill">${reservationSeries.filter((item) => item.status === "active").length}</span>
+        </div>
+        <div class="admin-reservation-list">
+          ${reservationSeries.length ? reservationSeries.map((series) => `
+            <button class="admin-reservation ${series.status === "active" ? "good" : ""}" data-action="admin-series" data-series="${series.id}">
+              <span>
+                <strong>${series.title}</strong>
+                <small>${series.ownerName} · ${series.courtName} · ${formatPortalDate(dateFromIso(series.startDate), false)} az ${formatPortalDate(dateFromIso(series.endDate), false)}</small>
+                <small>${series.start}-${series.end} · ${series.gameType === "single" ? "single" : "double"} · ${series.occurrenceCount} terminu</small>
+              </span>
+              <b>${series.status === "active" ? "aktivni" : "ukoncena"}</b>
+            </button>
+          `).join("") : `<div class="empty-state">Zatim neni zalozena zadna trvala rezervace.</div>`}
+        </div>
+      </section>
+
+      <section class="section soft">
+        <div class="section-head" data-help-target="admin-special-occupancy">
           <div>
             <h2>Specialni obsazenost</h2>
             <p class="muted">Blokace kurtu primo v rezervacich: turnaj, testovani, trening nebo vypletani.</p>
@@ -5814,7 +8260,7 @@ function renderAdminReservations() {
       </section>
 
       <section class="section schedule-section">
-        <div class="section-head compact-head">
+        <div class="section-head compact-head" data-help-target="admin-day-control">
           <h2>Kontrola dne podle kurtu</h2>
           <span class="pill">30 min</span>
         </div>
@@ -5860,7 +8306,7 @@ function renderAdminPlayersLegacy() {
         </div>
         <div class="profile-list">
           <div class="profile-row"><span>Vstup hosta</span><span>telefon/e-mail + jednorazovy kod</span></div>
-          <div class="profile-row"><span>Platba</span><span>QR zaloha nebo doplatek po hre</span></div>
+          <div class="profile-row"><span>Uhrada</span><span>osobne podle pravidel klubu</span></div>
           <div class="profile-row"><span>Omezeni</span><span>max. 1 aktivni rezervace bez schvaleni</span></div>
         </div>
         <button class="secondary-button" data-action="admin-player">Nastavit pravidla hostu</button>
@@ -5870,6 +8316,8 @@ function renderAdminPlayersLegacy() {
 }
 
 function renderAdminPlayers() {
+  const filteredPlayers = filteredAdminPlayers();
+  const activeSearch = String(state.adminPlayerSearch || "").trim();
   return `
     <section class="view admin-view">
       <section class="section">
@@ -5879,13 +8327,22 @@ function renderAdminPlayers() {
             <p class="muted">Typ hrace, kredit, sleva, poznamky spravce, rezervace a doporuceni do her.</p>
           </div>
           <div class="inline-actions compact-actions">
-            <span class="pill">${adminPlayerDirectory.length} profily</span>
-            <button class="small-button" data-action="admin-player-new">Novy hrac</button>
+            <span class="pill">${activeSearch ? `${filteredPlayers.length}/${adminPlayerDirectory.length}` : adminPlayerDirectory.length} profily</span>
+            ${isPrimaryClubAdmin() ? `<button class="small-button" data-action="admin-player-new">Novy ucet</button>` : ""}
           </div>
         </div>
+        <div class="admin-player-search" role="search" data-help-target="admin-player-search">
+          <label for="adminPlayerSearchInput">Vyhledat hrace nebo hosta</label>
+          <div class="admin-player-search-row">
+            <input id="adminPlayerSearchInput" type="search" value="${escapeAttribute(activeSearch)}" placeholder="Jmeno, e-mail nebo typ uctu" autocomplete="off">
+            ${activeSearch ? `<button class="admin-player-search-clear" data-confirm="admin-player-search-clear" aria-label="Zrusit vyhledavani" title="Zrusit vyhledavani">&times;</button>` : ""}
+            <button class="admin-player-search-submit" data-confirm="admin-player-search" aria-label="Vyhledat hrace" title="Vyhledat hrace"><span aria-hidden="true">&#128269;</span></button>
+          </div>
+          ${activeSearch ? `<small>Nalezeno ${filteredPlayers.length} profilu pro „${escapeAttribute(activeSearch)}“.</small>` : `<small>Hleda ve jmenu, e-mailu a typu uctu.</small>`}
+        </div>
         <div class="admin-player-grid">
-          ${adminPlayerDirectory.map((player) => `
-            <button class="admin-player-card ${playerTone(player)}" data-action="admin-player" data-player="${player.id}">
+          ${filteredPlayers.map((player, index) => `
+            <button class="admin-player-card ${playerTone(player)}" data-action="admin-player" data-player="${player.id}" ${index === 0 ? 'data-help-target="admin-player-list"' : ""}>
               <span class="avatar" data-player="${player.id}">${avatarContent(player)}</span>
               <span>
                 <strong>${player.name}</strong>
@@ -5893,11 +8350,11 @@ function renderAdminPlayers() {
                 <small>Kredit ${formatMoney(totalCredit(player))} (${formatMoney(player.paidCredit)} + bonus ${formatMoney(player.bonusCredit)})</small>
                 <small>Sleva ${player.discount} % (${player.baseDiscount} % + vernost ${player.loyaltyDiscount} %) · final Kurt 1 vecer ${formatMoney(playerFinalPrice(240, player))}/h</small>
                 <small>${loyaltyTierForHours(player.playedHours).label} · ${player.playedHours} h · sezona ${formatMoney(player.seasonSpend)}</small>
-                <small>${player.adminNote}</small>
+                ${visibleAdminNote(player) ? `<small>${visibleAdminNote(player)}</small>` : ""}
               </span>
               <b>${player.accountType === "guest" ? "pevna cena" : "sleva"}</b>
             </button>
-          `).join("")}
+          `).join("") || `<div class="admin-player-empty"><strong>Zadny profil nenalezen</strong><small>Zkus jinou cast jmena nebo e-mailu.</small><button class="secondary-button" data-confirm="admin-player-search-clear">Zobrazit vsechny profily</button></div>`}
         </div>
       </section>
 
@@ -5908,7 +8365,7 @@ function renderAdminPlayers() {
         </div>
         <div class="profile-list">
           <div class="profile-row"><span>Vstup hosta</span><span>telefon/e-mail + jednorazovy kod</span></div>
-          <div class="profile-row"><span>Platba</span><span>QR zaloha nebo doplatek po hre</span></div>
+          <div class="profile-row"><span>Uhrada</span><span>osobne podle pravidel klubu</span></div>
           <div class="profile-row"><span>Omezeni</span><span>max. 1 aktivni rezervace bez schvaleni</span></div>
         </div>
         <button class="secondary-button" data-action="admin-player">Nastavit pravidla hostu</button>
@@ -5917,10 +8374,11 @@ function renderAdminPlayers() {
       <section class="section">
         <div class="section-head">
           <h2>Navaznosti kreditu</h2>
-          <span class="pill">tok platby</span>
+          <span class="pill">rucni pripis</span>
         </div>
         <div class="credit-flow">
-          <span>QR dobiti</span>
+          <span>penize prijme klub</span>
+          <span>spravce pripise kredit</span>
           <span>rezervace</span>
           <span>odehrano</span>
           <span>strzeni kreditu</span>
@@ -5931,7 +8389,7 @@ function renderAdminPlayers() {
       <section class="section soft">
         <div class="section-head">
           <h2>Vazeny hrac a produkty</h2>
-          <span class="pill">budouci e-shop</span>
+          <span class="pill">partnersky katalog</span>
         </div>
         <div class="profile-list">
           <div class="profile-row"><span>Podminka</span><span>100+ odehranych hodin v klubu</span></div>
@@ -5947,7 +8405,7 @@ function renderAdminEvents() {
   return `
     <section class="view admin-view">
       <section class="section">
-        <div class="section-head">
+        <div class="section-head" data-help-target="admin-events">
           <div>
             <h2>Akce a turnaje</h2>
             <p class="muted">Publikace akci, startovne, prihlaseni hraci, vysledky, fotky a odkazy.</p>
@@ -5974,7 +8432,7 @@ function renderAdminEvents() {
       ${adminTournamentSection()}
 
       <section class="section sales-section">
-        <div class="section-head">
+        <div class="section-head" data-help-target="admin-polls">
           <div>
             <h2>Anketa sortimentu</h2>
             <p class="muted">Spravce pred akci zjisti, co hraci chteji vyzkouset. Hlasy se vazi podle utraty a aktivity hrace.</p>
@@ -6033,10 +8491,10 @@ function renderAdminEvents() {
 function adminTournamentSection() {
   return `
     <section class="section tournament-section">
-      <div class="section-head">
+      <div class="section-head" data-help-target="admin-tournaments">
         <div>
-          <h2>Single turnaje</h2>
-          <p class="muted">Prihlasky do uzaverky, automaticke skupiny podle poctu hracu a kurtu, tabulky a pavouk.</p>
+          <h2>Single a double turnaje</h2>
+          <p class="muted">Jednotlivci nebo pary, uzaverka, automaticke skupiny podle poctu kurtu, tabulky a pavouk.</p>
         </div>
         <button class="small-button" data-action="tournament-admin">Novy</button>
       </div>
@@ -6046,7 +8504,7 @@ function adminTournamentSection() {
             <span>
               <strong>${tournament.title}</strong>
               <small>${tournament.date} · uzaverka ${tournament.deadline} · ${tournament.courts.length} kurty</small>
-              <small>${tournament.participants.length}/${tournament.maxPlayers} hracu · stav ${tournament.status}</small>
+              <small>${tournament.participants.length}/${tournament.maxPlayers} hracu · startovne ${tournament.entryFee} · stav ${tournament.status}</small>
               <small>${tournament.rules}</small>
             </span>
             <b>${tournament.status}</b>
@@ -6058,6 +8516,7 @@ function adminTournamentSection() {
 }
 
 function renderAdminSettings() {
+  const moduleLabels = { core: "Zaklad portalu", reservations: "Rezervace", community: "Hraci a hledani", events: "Klubove akce", tournaments: "Turnaje", payments: "Klubovy kredit", shop: "Objednavky", stringing: "Vypletani", coaches: "Treneri", operations: "Provoz klubu", analytics: "Podnikatelske statistiky", ai: "AI souhrny", access: "Automaticky vstup" };
   return `
     <section class="view admin-view">
       <section class="section">
@@ -6066,7 +8525,7 @@ function renderAdminSettings() {
             <h2>Nastaveni klubu</h2>
             <p class="muted">Zakladni konfigurace, aby portal sel nasadit na libovolny klub a hosting.</p>
           </div>
-          <button class="small-button" data-action="admin-settings">Upravit</button>
+          ${isPrimaryClubAdmin() ? `<button class="small-button" data-action="admin-settings">Upravit</button>` : `<span class="pill">jen pro cteni</span>`}
         </div>
         <div class="profile-list">
           <div class="profile-row"><span>Nazev klubu</span><span>${club.name}</span></div>
@@ -6074,22 +8533,27 @@ function renderAdminSettings() {
           <div class="profile-row"><span>Oteviraci doba</span><span>${club.open}-${club.close}</span></div>
           <div class="profile-row"><span>Slot rezervace</span><span>${club.slotMinutes} minut</span></div>
           <div class="profile-row"><span>Potvrzeni ucasti</span><span>${state.attendanceRequired ? "den predem zapnuto" : "vypnuto"}</span></div>
-          <div class="profile-row"><span>Oznameni</span><span>${state.notificationsEnabled ? "portal + budouci push" : "vypnuto"}</span></div>
+          <div class="profile-row"><span>Oznameni</span><span>${state.notificationsEnabled ? "portal + push" : "vypnuto"}</span></div>
         </div>
       </section>
 
+      ${platformContext.enabled ? `<section class="section"><div class="section-head"><div><h2>Moduly klubu</h2><p class="muted">${isPrimaryClubAdmin() ? "Funkce lze zapnout po klubech; zavislosti hlida server." : "Spravce klubu vidi aktivni funkce, ale meni je pouze hlavni spravce."}</p></div><span class="pill">${isPrimaryClubAdmin() ? "hlavni sprava" : "prehled"}</span></div><div class="profile-list">${platformModules.map((module) => `<div class="profile-row"><span><strong>${moduleLabels[module.key] || module.key}</strong><small>${module.required ? "povinny zaklad" : module.dependencies.length ? `vyzaduje ${module.dependencies.join(", ")}` : "volitelny"}</small></span>${isPrimaryClubAdmin() ? `<button class="small-button ${module.enabled ? "active" : ""}" data-confirm="module-toggle" data-module="${module.key}" data-enabled="${module.enabled}" ${module.required ? "disabled" : ""}>${module.enabled ? "Zapnuto" : "Vypnuto"}</button>` : `<span class="pill ${module.enabled ? "active" : ""}">${module.enabled ? "Zapnuto" : "Vypnuto"}</span>`}</div>`).join("")}</div></section>` : ""}
+
       <section class="section">
         <div class="section-head">
-          <h2>Cenik a platby</h2>
-          <span class="pill">QR nejlevnejsi</span>
+          <h2>Cenik a klubovy kredit</h2>
+          <span class="pill">rucni pripis</span>
         </div>
         <div class="profile-list">
           <div class="profile-row"><span>Vypocet ceny</span><span>sazba kurtu × delka hry - sleva hrace</span></div>
-          <div class="profile-row"><span>Strzeni kreditu</span><span>automaticky po odehrani nebo rucne spravcem</span></div>
+          <div class="profile-row"><span>Dobiti kreditu</span><span>penize prijme klub, spravce pripise kredit hraci</span></div>
+          <div class="profile-row"><span>Strzeni kreditu</span><span>po odehrani rezervace</span></div>
           <div class="profile-row"><span>Typy hracu</span><span>klubovy, kreditovy, host</span></div>
         </div>
-        ${adminPaymentList()}
-        <button class="primary-button" data-action="admin-payment">Upravit platby</button>
+        <div class="inline-actions">
+          <button class="primary-button" data-view-link="players">Pripsat kredit hraci</button>
+          ${platformContext.enabled ? `<button class="secondary-button" data-confirm="accounting-export">Stahnout historii kreditu</button>` : ""}
+        </div>
       </section>
 
       <section class="section soft">
@@ -6120,9 +8584,47 @@ function adminPaymentList() {
   `;
 }
 
+async function exportAccountingCsv() {
+  if (!platformContext.enabled || !platformContext.clubId) {
+    lastActionMessage = "Ucetni export je dostupny po pripojeni klubu k platforme.";
+    return false;
+  }
+  try {
+    const response = await fetch(`${PLATFORM_API_BASE}/api/v2/clubs/${platformContext.clubId}/charges/export.csv`, { credentials: "include" });
+    if (!response.ok) throw new Error("Ucetni export se nepodarilo pripravit.");
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${platformContext.clubId}-platby-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    lastActionMessage = "Ucetni CSV je pripraveno.";
+    return true;
+  } catch (error) {
+    lastActionMessage = error.message;
+    return false;
+  }
+}
+
 function priceEditor(court) {
   const rules = priceRulesForCourt(court);
   const timeOptions = slots().concat(club.close);
+  const priceSlotGroup = (label, period) => {
+    const items = periodSlots(period);
+    if (!items.length) return "";
+    return `
+      <div class="price-slot-group">
+        <div class="period-label"><span>${label}</span><span>${items[0]}-${club.close === items[0] ? club.close : minutesToTime(timeToMinutes(items.at(-1)) + club.slotMinutes)}</span></div>
+        <div class="price-slot-board">
+          ${items.map((time) => {
+            const price = priceForCourtAt(court, time);
+            const peak = rules.some((rule) => timeToMinutes(rule.start) <= timeToMinutes(time) && timeToMinutes(rule.end) > timeToMinutes(time) && Number(rule.price) > Number(rules[0]?.price || 0));
+            return `<button class="price-slot ${peak ? "peak" : ""}" data-price-slot data-time="${time}" data-price="${price}"><strong>${time}</strong><small>${formatMoney(price)}/h</small></button>`;
+          }).join("")}
+        </div>
+      </div>`;
+  };
   return `
     <div class="price-editor" data-price-court="${court.id}">
       <div class="period-label"><span>Cenove useky</span><span>spravce vybere od-do jako u rezervace</span></div>
@@ -6134,14 +8636,17 @@ function priceEditor(court) {
       </div>
       <button class="primary-button" data-confirm="admin-price-save" data-court="${court.id}">Ulozit cenovy usek</button>
       ${rules.map((rule) => `
-        <button class="price-rule" data-price-rule data-court="${court.id}" data-days="${rule.days}" data-start="${rule.start}" data-end="${rule.end}" data-price="${rule.price}">
-          <span><strong>${rule.days}</strong><small>${rule.start}-${rule.end}</small></span>
-          <b>${formatMoney(rule.price)}/h</b>
-        </button>
-      `).join("") || `<button class="price-rule" data-confirm="admin-save"><span><strong>Zatim bez sazby</strong><small>kliknutim vytvorit prvni usek</small></span><b>0 Kc/h</b></button>`}
-      <div class="price-slot-board">
-        ${periodSlots("morning").slice(0, 10).map((time) => `<button class="price-slot" data-price-slot data-time="${time}" data-price="160"><strong>${time}</strong><small>160</small></button>`).join("")}
-        ${periodSlots("afternoon").slice(0, 12).map((time, index) => `<button class="price-slot ${index > 5 ? "peak" : ""}" data-price-slot data-time="${time}" data-price="${index > 5 ? "240" : "190"}"><strong>${time}</strong><small>${index > 5 ? "240" : "190"}</small></button>`).join("")}
+        <div class="price-rule">
+          <button class="price-rule-select" data-price-rule data-court="${court.id}" data-days="${rule.days}" data-start="${rule.start}" data-end="${rule.end}" data-price="${rule.price}">
+            <span><strong>${rule.days}</strong><small>${rule.start}-${rule.end}</small></span>
+            <b>${formatMoney(rule.price)}/h</b>
+          </button>
+          <button class="price-rule-remove" data-confirm="admin-price-delete" data-court="${court.id}" data-rule="${rule.id}" aria-label="Odebrat cenovy usek ${rule.start}-${rule.end}" title="Odebrat cenovy usek">&times;</button>
+        </div>
+      `).join("") || `<div class="price-rule"><span><strong>Zatim bez sazby</strong><small>vyberte cas a vytvorte prvni usek</small></span><b>0 Kc/h</b></div>`}
+      <div class="price-slot-groups">
+        ${priceSlotGroup("Dopoledne", "morning")}
+        ${priceSlotGroup("Odpoledne", "afternoon")}
       </div>
     </div>
   `;
@@ -6149,6 +8654,8 @@ function priceEditor(court) {
 
 function openModal(kind, data = {}) {
   const modals = {
+    help: helpCenterModal,
+    "help-topic": helpTopicModal,
     book: bookingModal,
     cancel: cancelModal,
     "find-player": findPlayerModal,
@@ -6173,15 +8680,21 @@ function openModal(kind, data = {}) {
     "event-admin": eventAdminModal,
     "admin-court": adminCourtModal,
     "admin-reservation": adminReservationModal,
+    "admin-recurring": adminRecurringModal,
+    "admin-series": adminSeriesModal,
     "admin-player": adminPlayerModal,
     "admin-player-new": adminPlayerNewModal,
     "admin-event": adminEventModal,
     "tournament-admin": tournamentAdminModal,
     "seller-event": sellerEventModal,
     "admin-payment": adminPaymentModal,
+    password: passwordModal,
+    privacy: privacyModal,
+    connections: connectionsModal,
     "admin-settings": adminSettingsModal,
     "admin-invite": adminInviteModal,
     "credit-bonus": creditBonusModal,
+    "credit-topup": manualCreditModal,
     "habit-alert": habitAlertModal,
     "sales-campaign": salesCampaignModal,
     "product-poll": productPollModal,
@@ -6218,7 +8731,7 @@ function bookingModal(data) {
         <div class="field"><label>Delka</label><select id="bookingDurationInput">${club.defaultDurations.map((duration) => `<option value="${duration}" ${duration === 90 ? "selected" : ""}>${duration / 60} h</option>`).join("")}</select></div>
         <div class="field"><label>Spoluhrac z klubu</label><select id="bookingPartnerInput"><option value="">Zatim bez spoluhrace / hledat pozdeji</option>${playerOptions}</select></div>
         <div class="field"><label>Stav spoluhrace</label><select id="bookingPartnerModeInput"><option value="invite">Poslat zpravu a cekat na potvrzeni</option><option value="confirmed">Vim, ze jde - rovnou zapsat</option></select></div>
-        <div class="field"><label>Platba</label><select><option>QR po rezervaci</option><option>QR pred objednanim</option><option>QR po odehrani</option></select></div>
+        <div class="field"><label>Cena rezervace</label><input value="Po odehrani se odecte z kluboveho kreditu" readonly></div>
       </div>
       <button class="primary-button" data-confirm="book">Potvrdit rezervaci</button>
     </div>
@@ -6245,7 +8758,7 @@ function cancelModal(data = {}) {
   return `
     <div class="modal-body">
       <div>
-        <p class="eyebrow">Trvala rezervace</p>
+        <p class="eyebrow">${reservation.kind === "Trvala" ? "Trvala rezervace - jeden termin" : "Jednorazova rezervace"}</p>
         <h2 id="modalTitle">Omluvit se z terminu?</h2>
         <p class="muted">${reservationDateLabel(reservation)} ${reservation.start}-${reservation.end}, ${reservation.court.name}. ${hasReplacement ? "Nahradnik uz je potvrzeny, proto uz omluvenku nelze vzit zpet bez domluvy se spravcem/skupinou." : "Ostatnim se hned spusti hledani a hlasovani o nahradnikovi."}</p>
       </div>
@@ -6336,20 +8849,24 @@ function legacyInvitePlayerModal(data) {
   `;
 }
 
-function counterOfferModal() {
+function counterOfferModal(data = {}) {
+  const proposal = gameProposals.find((item) => item.id === data.proposalId) || visibleGameProposals()[0];
+  const parsed = parseProposalTime(proposal?.title || "") || { start: "17:00", end: "18:30" };
+  const date = proposal?.isoDate || selectedBookingIsoDate();
   return `
     <div class="modal-body">
       <div>
         <p class="eyebrow">Protinavrh</p>
-        <h2 id="modalTitle">Kamarad muze o hodinu pozdeji</h2>
-        <p class="muted">Pozvany hrac nemusi mit cas hned. Posle svuj cas a zvouci hrac potvrdi novy termin.</p>
+        <h2 id="modalTitle">Navrhnout jiny volny termin</h2>
+        <p class="muted">Vyber konkretni datum, kurt a vsechny pulhodinove casy. Puvodni rezervace zustane blokovana, dokud zvouci hrac protinavrh neprijme.</p>
       </div>
-      <div class="profile-list">
-        <div class="profile-row"><span>Puvodni navrh</span><span>Patek 17:00</span></div>
-        <div class="profile-row"><span>Protinavrh</span><span>Patek 18:30</span></div>
-        <div class="profile-row"><span>Po shode</span><span>Vytvori se rezervace obema do kalendare</span></div>
+      <div class="form-grid">
+        <div class="field"><label>Datum</label><input id="counterDateInput" type="date" value="${date}"></div>
+        <div class="field"><label>Kurt</label><select id="counterCourtInput">${courts.map((court) => `<option value="${court.id}">${court.name} · ${court.surface}</option>`).join("")}</select></div>
+        <div class="field"><label>Od</label><select id="counterStartInput">${slots().slice(0, -1).map((time) => `<option ${time === parsed.start ? "selected" : ""}>${time}</option>`).join("")}</select></div>
+        <div class="field"><label>Do</label><select id="counterEndInput">${slots().slice(1).map((time) => `<option ${time === parsed.end ? "selected" : ""}>${time}</option>`).join("")}</select></div>
       </div>
-      <button class="primary-button" data-confirm="counter">Prijmout protinavrh</button>
+      <button class="primary-button" data-confirm="counter-send" data-proposal-id="${proposal?.id || ""}">Odeslat protinavrh</button>
     </div>
   `;
 }
@@ -6370,7 +8887,7 @@ function invitePlayerModal(data) {
         ${eventMode ? `<input type="hidden" id="inviteEventInput" value="${event.id}">` : `
           <div class="field"><label>Typ hry</label><select id="inviteGameType"><option value="single">Single - 2 hraci</option><option value="double" selected>Double - 4 hraci</option></select></div>
           <div class="field"><label>Navrhovany termin</label><select id="inviteTimeInput">${gameTimeOptions.map((option) => `<option>${option}</option>`).join("")}</select></div>
-          <div class="field"><label>Kurt</label><select id="inviteCourtInput"><option>Kurt 1 · Antuka</option><option>Kurt 2 · Umele</option><option>Kurt 3 · Trava</option></select></div>
+          <div class="field"><label>Kurt</label><select id="inviteCourtInput">${courts.map((court) => `<option value="${court.id}">${court.name} · ${court.surface}</option>`).join("")}</select></div>
         `}
         <div class="field invite-friends-field"><label>Koho pozvat</label><div class="choice-list">${friendOptions(player?.id || "", { eventId: event?.id || "" })}</div></div>
       </div>
@@ -6515,19 +9032,39 @@ function courtDetailModal(data) {
 }
 
 function loginModal() {
+  const signedIn = platformContext.enabled && Boolean(platformContext.userId);
   return `
     <div class="modal-body">
       <div>
         <p class="eyebrow">Prihlaseni</p>
         <h2 id="modalTitle">E-mail a heslo</h2>
       </div>
-      <div class="form-grid">
+      ${signedIn ? `<div class="profile-list"><div class="profile-row"><span>Prihlasen</span><span>${platformContext.email}</span></div></div>` : `<div class="form-grid">
         <div class="field"><label>E-mail</label><input id="loginEmailInput" value="" type="email" autocomplete="username"></div>
         <div class="field"><label>Heslo</label><input id="loginPasswordInput" value="" type="password" autocomplete="current-password"></div>
-      </div>
+      </div>`}
       <div class="inline-actions">
-        <button class="primary-button" data-confirm="login-enter">Prihlasit</button>
+        ${signedIn ? `<button class="secondary-button" data-action="password">Zmenit heslo</button>` : ""}
+        <button class="primary-button" data-confirm="${signedIn ? "logout" : "login-enter"}">${signedIn ? "Odhlasit" : "Prihlasit"}</button>
       </div>
+    </div>
+  `;
+}
+
+function passwordModal() {
+  return `
+    <div class="modal-body">
+      <div>
+        <p class="eyebrow">Zabezpeceni uctu</p>
+        <h2 id="modalTitle">Zmenit heslo</h2>
+        <p class="muted">Po zmene se odhlasi tento telefon i vsechna dalsi zarizeni.</p>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Soucasne heslo</label><input id="currentPasswordInput" type="password" autocomplete="current-password"></div>
+        <div class="field"><label>Nove heslo</label><input id="newPasswordInput" type="password" minlength="12" autocomplete="new-password"></div>
+        <div class="field"><label>Nove heslo znovu</label><input id="confirmPasswordInput" type="password" minlength="12" autocomplete="new-password"></div>
+      </div>
+      <button class="primary-button" data-confirm="password-change">Zmenit heslo a odhlasit zarizeni</button>
     </div>
   `;
 }
@@ -6536,16 +9073,15 @@ function payModal() {
   return `
     <div class="modal-body">
       <div>
-        <p class="eyebrow">Platba kurtu</p>
-        <h2 id="modalTitle">QR platba</h2>
-        <p class="muted">Levna varianta bez platebni brany. QR lze ukazat pred rezervaci, pri potvrzeni nebo po hre.</p>
+        <p class="eyebrow">Klubovy kredit</p>
+        <h2 id="modalTitle">Dobiti u spravce</h2>
+        <p class="muted">Tennis Siruch nepouziva platebni branu. Penize prijme klub a spravce je pripise do kreditu hrace.</p>
       </div>
-      <div class="qr-box">QR</div>
       <div class="profile-list">
-        <div class="profile-row"><span>Castka</span><span class="pill">320 Kc</span></div>
-        <div class="profile-row"><span>Variabilni symbol</span><span>2026061301</span></div>
+        <div class="profile-row"><span>Zustatek</span><span class="pill">${formatMoney(totalCredit(currentUser))}</span></div>
+        <div class="profile-row"><span>Postup</span><span>kontaktuj spravce klubu</span></div>
       </div>
-      <button class="primary-button" data-confirm="pay">Oznacit jako zaplaceno</button>
+      <button class="primary-button" data-confirm="close">Zavrit</button>
     </div>
   `;
 }
@@ -6583,7 +9119,7 @@ function guestModal() {
       <div class="profile-list">
         <div class="profile-row"><span>1. krok</span><span>Telefon nebo e-mail</span></div>
         <div class="profile-row"><span>2. krok</span><span>SMS/e-mail kod</span></div>
-        <div class="profile-row"><span>3. krok</span><span>Rezervace + QR zaloha</span></div>
+        <div class="profile-row"><span>3. krok</span><span>Rezervace + uhrada na klubu</span></div>
       </div>
       <button class="primary-button" data-confirm="guest">Pokracovat jako host</button>
     </div>
@@ -6719,6 +9255,38 @@ function notificationDetailModal(data = {}) {
       </div>
     `;
   }
+  if (item?.type === "replacement-invite") {
+    return `
+      <div class="modal-body">
+        <div><p class="eyebrow">Pozvanka jako nahradnik</p><h2 id="modalTitle">${item.title}</h2>
+          <p class="muted">${item.meta}. Po tvem souhlasu rozhodnou aktivni hraci hlasovanim; teprve vybrany nahradnik se zapise do rezervace.</p></div>
+        <div class="inline-actions">
+          <button class="secondary-button" data-confirm="decline-replacement-invite" data-notification="${item.id}">Odmitnout</button>
+          <button class="primary-button" data-confirm="accept-replacement-invite" data-notification="${item.id}">Mam cas</button>
+        </div>
+      </div>`;
+  }
+  if (item?.type === "replacement-vote") {
+    const candidate = playerRecordById(platformPersonaByMembership(item.candidateMembershipId));
+    return `
+      <div class="modal-body">
+        <div><p class="eyebrow">Hlasovani sestavy</p><h2 id="modalTitle">${candidate?.name || "Kandidat na nahradnika"}</h2>
+          <p class="muted">${item.meta}</p></div>
+        <div class="profile-list"><div class="profile-row"><span>Kandidat</span><span>${candidate?.name || "Clen klubu"}</span></div></div>
+        <button class="primary-button" data-confirm="platform-replacement-vote" data-notification="${item.id}">Hlasovat pro hrace</button>
+      </div>`;
+  }
+  if (item?.type === "counterproposal") {
+    return `
+      <div class="modal-body">
+        <div><p class="eyebrow">Protinavrh hry</p><h2 id="modalTitle">${item.title}</h2>
+          <p class="muted">Novy termin: ${item.meta}. Pri prijeti portal znovu zkontroluje kurt i vsechny hrace a presune jejich pulhodinove bloky.</p></div>
+        <div class="inline-actions">
+          <button class="secondary-button" data-confirm="counter-decline" data-notification="${item.id}">Odmitnout</button>
+          <button class="primary-button" data-confirm="counter-accept" data-notification="${item.id}">Prijmout novy termin</button>
+        </div>
+      </div>`;
+  }
   if (item?.type === "invite" && item.proposalId) {
     const proposal = gameProposals.find((entry) => entry.id === item.proposalId);
     return `
@@ -6790,6 +9358,20 @@ function notificationDetailModal(data = {}) {
       </div>
     `;
   }
+  if (item?.type === "order-ready") {
+    const order = playerOrders.find((entry) => entry.id === item.orderId);
+    return `
+      <div class="modal-body">
+        <div>
+          <p class="eyebrow">Klubovy obchod</p>
+          <h2 id="modalTitle">${item.title}</h2>
+          <p class="muted">${item.meta}</p>
+        </div>
+        ${order ? `<div class="profile-list"><div class="profile-row"><span>Produkt</span><span>${order.product}</span></div><div class="profile-row"><span>Predani</span><span>${orderDeliveryLabel(order)}</span></div><div class="profile-row"><span>Stav</span><span>${order.status}</span></div></div>` : ""}
+        <button class="primary-button" data-confirm="dismiss-notification" data-notification="${item.id}">Rozumim</button>
+      </div>
+    `;
+  }
   if (item?.type === "event-announcement" || item?.type === "event-cancelled") {
     const event = events.find((entry) => entry.id === item.eventId);
     const thumb = eventThumbnail(event?.thumbnail || "rackets");
@@ -6857,15 +9439,18 @@ function notificationDetailModal(data = {}) {
   `;
 }
 
-function busyModal() {
+function busyModal(data = {}) {
+  const requested=timeToMinutes(data.time||club.open); const alternatives=[];
+  for(const offset of [0,30,-30,60,-60,90,-90]) for(const court of courts){const time=minutesToTime(requested+offset);if(timeToMinutes(time)>=timeToMinutes(club.open)&&timeToMinutes(time)<timeToMinutes(club.close)&&slotType(court,time)==="free"&&!alternatives.some((item)=>item.court.id===court.id&&item.time===time)) alternatives.push({court,time});if(alternatives.length>=4)break;}
   return `
     <div class="modal-body">
       <div>
         <p class="eyebrow">Obsazeno</p>
         <h2 id="modalTitle">Tento cas neni volny</h2>
-        <p class="muted">Dalsi iterace muze pridat hlidani uvolneni nebo nabidku podobnych casu.</p>
+        <p class="muted">Vybral jsem nejblizsi skutecne volne varianty pro ${formatPortalDate(selectedBookingDateObject(), false)}.</p>
       </div>
-      <button class="primary-button" data-confirm="close">Rozumim</button>
+      <div class="profile-list">${alternatives.map((item)=>`<button class="profile-row row-button" data-action="book" data-court="${item.court.name}" data-time="${item.time}"><span><strong>${item.court.name}</strong><small>${item.court.surface}</small></span><span>${item.time}</span></button>`).join("")||`<div class="profile-row"><span>V tento den uz neni blizky volny termin.</span></div>`}</div>
+      <button class="secondary-button" data-confirm="close">Zavrit</button>
     </div>
   `;
 }
@@ -6951,7 +9536,73 @@ function adminCourtModal(data) {
   `;
 }
 
+function adminBookingCreateModal(recurring = false) {
+  const roster = adminBookingPlayers();
+  const optionList = (emptyLabel = "Nevybran") => `<option value="">${emptyLabel}</option>${roster.map((player) => `<option value="${player.id}" ${player.id === "radim" ? "selected" : ""}>${player.name}</option>`).join("")}`;
+  const partnerOptions = `<option value="">Nevybran</option>${roster.map((player) => `<option value="${player.id}">${player.name}</option>`).join("")}`;
+  const startDate = selectedBookingDateObject();
+  const seriesEnd = new Date(startDate.getFullYear(), startDate.getMonth() + 3, startDate.getDate(), 12);
+  return `
+    <div class="modal-body">
+      <div>
+        <p class="eyebrow">${recurring ? "Trvala rezervace" : "Rucni rezervace"}</p>
+        <h2 id="modalTitle">${recurring ? "Kazdy tyden ve stejny cas" : "Pridat rezervaci hraci"}</h2>
+        <p class="muted">${recurring ? "Vsechny terminy se nejdriv zkontroluji. Pri jedine kolizi se serie nevytvori castecne." : "Rezervace se ihned propise vybranym hracum i do rozvrhu kurtu."}</p>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Nazev</label><input id="adminBookingTitleInput" value="${recurring ? "Trvala klubova rezervace" : "Rucni rezervace"}"></div>
+        <div class="field"><label>Prvni termin</label><input id="adminBookingDateInput" type="date" value="${dateInputValue(startDate)}"></div>
+        ${recurring ? `<div class="field"><label>Posledni termin sezony</label><input id="adminBookingSeriesEndInput" type="date" value="${dateInputValue(seriesEnd)}"></div>` : ""}
+        <div class="field"><label>Kurt</label><select id="adminBookingCourtInput">${courts.map((court) => `<option value="${court.id}">${court.name} · ${court.surface}</option>`).join("")}</select></div>
+        <div class="booking-field-grid">
+          <div class="field"><label>Od</label><input id="adminBookingStartInput" type="time" step="1800" value="17:00"></div>
+          <div class="field"><label>Do</label><input id="adminBookingEndInput" type="time" step="1800" value="19:00"></div>
+        </div>
+        <div class="field"><label>Typ hry</label><select id="adminBookingGameInput"><option value="double">Double - 4 hraci</option><option value="single">Single - 2 hraci</option></select></div>
+        <div class="field"><label>Vlastnik rezervace</label><select id="adminBookingOwnerInput">${optionList("Vyber hrace")}</select></div>
+        <div class="field"><label>Spoluhrac 1</label><select id="adminBookingPartner1Input">${partnerOptions}</select></div>
+        <div class="field"><label>Spoluhrac 2</label><select id="adminBookingPartner2Input">${partnerOptions}</select></div>
+        <div class="field"><label>Spoluhrac 3</label><select id="adminBookingPartner3Input">${partnerOptions}</select></div>
+      </div>
+      <button class="primary-button" data-confirm="${recurring ? "admin-recurring-create" : "admin-booking-create"}">${recurring ? "Vytvorit celou serii" : "Ulozit rezervaci"}</button>
+    </div>
+  `;
+}
+
+function adminRecurringModal() {
+  return adminBookingCreateModal(true);
+}
+
+function adminSeriesModal(data = {}) {
+  const series = reservationSeries.find((item) => item.id === data.series) || reservationSeries[0];
+  if (!series) return busyModal();
+  const today = dateToIso(appToday);
+  const cancelFrom = today > series.startDate ? today : series.startDate;
+  return `
+    <div class="modal-body">
+      <div>
+        <p class="eyebrow">Trvala rezervace</p>
+        <h2 id="modalTitle">${series.title}</h2>
+        <p class="muted">Ukonceni serie zrusi pouze neodehrane terminy od vybraneho dne. Predchozi historie zustane zachovana.</p>
+      </div>
+      <div class="profile-list">
+        <div class="profile-row"><span>Vlastnik</span><span>${series.ownerName}</span></div>
+        <div class="profile-row"><span>Kurt</span><span>${series.courtName}</span></div>
+        <div class="profile-row"><span>Obdobi</span><span>${formatPortalDate(dateFromIso(series.startDate), false)} az ${formatPortalDate(dateFromIso(series.endDate), false)}</span></div>
+        <div class="profile-row"><span>Cas</span><span>${series.start}-${series.end}</span></div>
+        <div class="profile-row"><span>Typ</span><span>${series.gameType === "single" ? "Single" : "Double"}</span></div>
+        <div class="profile-row"><span>Aktivni terminy</span><span>${series.occurrenceCount}</span></div>
+      </div>
+      ${series.status === "active" ? `
+        <div class="field"><label>Zrusit budouci terminy od</label><input id="adminSeriesCancelFromInput" type="date" min="${series.startDate}" max="${series.endDate}" value="${cancelFrom}"></div>
+        <button class="danger-button" data-confirm="admin-series-cancel" data-series="${series.id}">Ukoncit budouci terminy</button>
+      ` : `<button class="primary-button" data-confirm="close">Zavrit</button>`}
+    </div>
+  `;
+}
+
 function adminReservationModal(data = {}) {
+  if (!data.reservationId) return adminBookingCreateModal(false);
   const reservation = reservationById(data.reservationId) || personalReservations[0];
   const attendance = normalizedAttendance(reservation);
   const target = reservationTargetPlayers(reservation);
@@ -6971,8 +9622,8 @@ function adminReservationModal(data = {}) {
         ${attendance.map((player) => `<div class="profile-row"><span>${player.name}</span><span>${player.status} · ${player.role}</span></div>`).join("")}
       </div>
       <div class="inline-actions">
-        <button class="secondary-button" data-confirm="admin-save">Poslat upozorneni</button>
-        <button class="primary-button" data-confirm="admin-save">Otevrit hledani hrace</button>
+        <button class="secondary-button" data-confirm="admin-reservation-remind" data-reservation="${reservation.id}">Poslat upozorneni hracum</button>
+        <button class="primary-button" data-confirm="close">Zavrit detail</button>
       </div>
     </div>
   `;
@@ -7033,11 +9684,10 @@ function legacyAdminPlayerModal(data) {
           <small>${player.accountType === "guest" ? "Host ma pevnou cenu, posuvnik je vypnuty v ostre verzi." : "Spravce posuvnikem nastavi celkovou slevu v procentech."}</small>
         </div>
         <div class="field"><label>Poznamka spravce ke sleve</label><textarea>${player.discountReason}</textarea></div>
-        <div class="field"><label>Interni poznamky spravce</label><textarea>${player.adminNote}</textarea></div>
+        <div class="field"><label>Interni poznamky spravce</label><textarea>${visibleAdminNote(player)}</textarea></div>
       </div>
       <div class="inline-actions">
-        <button class="secondary-button" data-confirm="admin-save">Navrhnout do hledane hry</button>
-        <button class="primary-button" data-confirm="admin-save">Ulozit hrace</button>
+        <button class="primary-button" data-confirm="close">Zavrit</button>
       </div>
     </div>
   `;
@@ -7058,15 +9708,20 @@ function adminEventModal(data) {
       </div>
       <div class="form-grid">
         <div class="field"><label>Nazev</label><input id="adminEventTitleInput" value="${event.title}"></div>
-        <div class="field"><label>Termin</label><input id="adminEventMetaInput" value="${event.meta}"></div>
+        <div class="booking-field-grid">
+          <div class="field"><label>Datum</label><input id="adminEventDateInput" type="date" value="${event.isoDate || dateToIso(appToday)}"></div>
+          <div class="field"><label>Od</label><input id="adminEventStartInput" type="time" step="1800" value="${event.startTime || "10:00"}"></div>
+          <div class="field"><label>Do</label><input id="adminEventEndInput" type="time" step="1800" value="${event.endTime || "12:00"}"></div>
+        </div>
         <div class="field"><label>Startovne</label><input id="adminEventFeeInput" value="${event.fee}"></div>
+        <div class="field"><label>Podrobnosti</label><textarea id="adminEventDetailInput">${event.detail || ""}</textarea></div>
         <div class="field"><label>Thumbnail</label><select id="adminEventThumbInput">${options}</select></div>
         <div class="field upload-field">
           <label>Vlastni obrazek</label>
           <input id="adminEventImageUrlInput" type="hidden" value="${customThumbnail ? event.thumbnail : ""}">
           <label class="secondary-button file-upload-button">Nahrat novy obrazek<input type="file" accept="image/*" data-image-upload data-image-kind="event" data-target-id="${event.id}" data-preview="adminEventImagePreview" data-url-input="adminEventImageUrlInput"></label>
         </div>
-        <div class="field"><label>Prihlaseni</label><textarea id="adminEventRegisteredInput">${event.registered.join("\n")}</textarea></div>
+        <div class="field"><label>Prihlaseni</label><div class="participant-table">${event.registered.length ? event.registered.map((name) => `<div class="participant-row"><strong>${name}</strong><span>Prihlasen</span></div>`).join("") : '<p class="empty-note">Zatim se nikdo neprihlasil.</p>'}</div></div>
         <div class="field"><label>Vysledky / historie</label><textarea id="adminEventHistoryInput">${event.history || "Doplnit po akci: vysledky, viteze, fotky, YouTube odkazy."}</textarea></div>
         <div class="field"><label>Duvod zruseni</label><textarea id="adminEventCancelReasonInput">${event.cancelReason || "Mrzi nas to, akci musime zrusit kvuli malemu poctu prihlasenych / organizacnim duvodum."}</textarea></div>
       </div>
@@ -7079,7 +9734,7 @@ function adminEventModal(data) {
       ` : ""}
       <div class="inline-actions">
         ${event.status !== "cancelled" ? `<button class="danger-button" data-confirm="admin-event-cancel" data-event="${event.id}">Zrusit akci</button>` : ""}
-        ${event.sourcePollId && event.status !== "seller_confirmed" ? `<button class="secondary-button" data-confirm="seller-request" data-event="${event.id}">Poslat obchodnikovi</button>` : ""}
+        ${event.sourcePollId && !platformContext.enabled && event.status !== "seller_confirmed" ? `<button class="secondary-button" data-confirm="seller-request" data-event="${event.id}">Poslat obchodnikovi</button>` : ""}
         <button class="primary-button" data-confirm="${event.sourcePollId && event.status !== "seller_confirmed" ? "admin-event-save" : event.status === "seller_confirmed" ? "event-publish" : "admin-event-save"}" data-event="${event.id}">${event.status === "seller_confirmed" ? "Publikovat hracum" : "Ulozit akci"}</button>
       </div>
     </div>
@@ -7100,7 +9755,11 @@ function sellerEventModal(data) {
         <div class="profile-row"><span>Podklad z ankety</span><span>${event.history || event.detail}</span></div>
       </div>
       <div class="form-grid">
-        <div class="field"><label>Potvrzeny termin</label><input id="sellerEventDateInput" value="${event.requestedDate || event.meta}"></div>
+        <div class="booking-field-grid">
+          <div class="field"><label>Potvrzeny den</label><input id="sellerEventDateInput" type="date" value="${event.isoDate || dateToIso(appToday)}"></div>
+          <div class="field"><label>Od</label><input id="sellerEventStartInput" type="time" step="1800" value="${event.startTime || "10:00"}"></div>
+          <div class="field"><label>Do</label><input id="sellerEventEndInput" type="time" step="1800" value="${event.endTime || "14:00"}"></div>
+        </div>
         <div class="field"><label>Co dodame na testy</label><textarea id="sellerDeliveryInput">${event.sellerDelivery || "Rakety/modely/velikosti podle vysledku ankety, demo sada na klub den pred akci."}</textarea></div>
         <div class="field"><label>Reakce obchodnika spravci</label><textarea id="sellerNoteInput">${event.sellerNote || "Termin potvrzuji, veci dodame na klub a po akci odvezeme neprodane kusy."}</textarea></div>
       </div>
@@ -7110,7 +9769,7 @@ function sellerEventModal(data) {
 }
 
 function adminPlayerNewModal() {
-  if (state.role !== "admin") {
+  if (!isPrimaryClubAdmin()) {
     return `
       <div class="modal-body">
         <div>
@@ -7125,13 +9784,14 @@ function adminPlayerNewModal() {
     <div class="modal-body player-admin-modal">
       <div>
         <p class="eyebrow">Novy ucet</p>
-        <h2 id="modalTitle">Pridat hrace do klubu</h2>
-        <p class="muted">Hrac se pak prihlasi e-mailem a heslem. Kamarady si musi potvrdit sam pres zadost.</p>
+        <h2 id="modalTitle">Pridat ucet do klubu</h2>
+        <p class="muted">Hlavni spravce muze zalozit hrace i provozniho spravce klubu. Moduly muze menit jen hlavni spravce.</p>
       </div>
       <div class="form-grid">
         <div class="field"><label>Jmeno</label><input id="newPlayerNameInput" value=""></div>
         <div class="field"><label>E-mail</label><input id="newPlayerEmailInput" type="email" value=""></div>
         <div class="field"><label>Heslo</label><input id="newPlayerPasswordInput" value="siruch-hrac"></div>
+        <div class="field"><label>Role uctu</label><select id="newPlayerRoleInput"><option value="player">Hrac</option><option value="manager">Spravce klubu</option><option value="coach">Trener</option><option value="stringer">Vypletac</option><option value="seller">Obchodnik</option></select></div>
         <div class="field"><label>Typ hrace</label><select id="newPlayerTypeInput"><option value="club">Klub - rocni prispevek</option><option value="credit">Kreditovy hrac</option><option value="guest">Host</option></select></div>
         <div class="field"><label>Pohlavi</label><select id="newPlayerGenderInput"><option value="male">Muz</option><option value="female">Zena</option></select></div>
         <div class="field"><label>Pocatecni kredit</label><input id="newPlayerCreditInput" type="number" min="0" step="100" value="0"></div>
@@ -7146,19 +9806,17 @@ function adminPaymentModal() {
   return `
     <div class="modal-body">
       <div>
-        <p class="eyebrow">Platby</p>
-        <h2 id="modalTitle">QR platby a doplatky</h2>
-        <p class="muted">Dobiti kreditu se interne eviduje jako zaplacena cast a bonus. Cena kurtu se pocita zvlast podle sazby a slevy hrace.</p>
+        <p class="eyebrow">Klubovy kredit</p>
+        <h2 id="modalTitle">Rucni pripis kreditu</h2>
+        <p class="muted">Spravce potvrdi skutecne prijatou castku v karte hrace. System automaticky prida nejvyssi odpovidajici bonus a zachova auditni historii.</p>
       </div>
       <div class="profile-list">
-        <div class="profile-row"><span>Dobiti hracem</span><span>3 000 Kc</span></div>
+        <div class="profile-row"><span>Prijato klubem</span><span>3 000 Kc</span></div>
         <div class="profile-row"><span>Bonus klubu</span><span>+100 Kc</span></div>
         <div class="profile-row"><span>Pripsat do kreditu</span><span>3 100 Kc</span></div>
-        <div class="profile-row"><span>Interni evidence</span><span>3 000 zaplaceno · 100 bonus</span></div>
+        <div class="profile-row"><span>Auditni evidence</span><span>3 000 prijato · 100 bonus</span></div>
       </div>
-      ${adminPaymentList()}
-      <div class="qr-box">QR</div>
-      <button class="primary-button" data-confirm="admin-save">Oznacit jako zaplaceno</button>
+      <button class="primary-button" data-confirm="close">Rozumim</button>
     </div>
   `;
 }
@@ -7174,7 +9832,7 @@ function adminSettingsModal() {
       <div class="form-grid">
         <div class="field"><label>Nazev klubu</label><input id="clubNameInput" value="${club.name}"></div>
         <div class="field"><label>Logo - text/inicialy</label><input id="clubLogoTextInput" value="${club.logoText || ""}" placeholder="SS"></div>
-        <div class="field upload-field"><label>Logo klubu</label><img id="clubLogoPreview" class="upload-preview logo-preview" src="${club.logoUrl || "assets/club-logo-dm-192.png?v=78"}" alt="Logo klubu"><input id="clubLogoUrlInput" type="hidden" value="${club.logoUrl || ""}"><label class="secondary-button file-upload-button">Vybrat logo<input type="file" accept="image/*" data-image-upload data-image-kind="club-logo" data-target-id="club" data-preview="clubLogoPreview" data-url-input="clubLogoUrlInput"></label></div>
+        <div class="field upload-field"><label>Logo klubu</label><img id="clubLogoPreview" class="upload-preview logo-preview" src="${club.logoUrl || "assets/club-logo-dm-192.png?v=124"}" alt="Logo klubu"><input id="clubLogoUrlInput" type="hidden" value="${club.logoUrl || ""}"><label class="secondary-button file-upload-button">Vybrat logo<input type="file" accept="image/*" data-image-upload data-image-kind="club-logo" data-target-id="club" data-preview="clubLogoPreview" data-url-input="clubLogoUrlInput"></label></div>
         <div class="field"><label>Otevreno od</label><input id="clubOpenSettingsInput" value="${club.open}"></div>
         <div class="field"><label>Zavreno</label><input id="clubCloseSettingsInput" value="${club.close}"></div>
         <div class="field"><label>Potvrzeni ucasti</label><select><option>Den pred terminem</option><option>Vypnuto</option><option>Jen trvale rezervace</option></select></div>
@@ -7209,21 +9867,57 @@ function adminInviteModal(data) {
 }
 
 function creditBonusModal(data) {
-  const rule = creditBonusRules.find((item) => item.name === data.package) || creditBonusRules[0];
+  const rule = creditBonusRules.find((item) => item.id === data.package || item.name === data.package);
+  const draft = rule || { id: "", name: "", paid: 3000, bonus: 100, note: "Bonus podle pravidel klubu." };
   return `
     <div class="modal-body">
       <div>
         <p class="eyebrow">Bonus kreditu</p>
-        <h2 id="modalTitle">${rule.name}</h2>
+        <h2 id="modalTitle">${rule ? rule.name : "Nove bonusove pravidlo"}</h2>
         <p class="muted">Hrac zaplati skutecne penize, bonus se pripise oddelene. Final cena kurtu se porad pocita ze sazby kurtu a slevy hrace.</p>
       </div>
       <div class="form-grid">
-        <div class="field"><label>Nazev</label><input id="creditBonusNameInput" value="${rule.name}"></div>
-        <div class="field"><label>Hrac zaplati</label><input id="creditBonusPaidInput" type="number" value="${rule.paid}"></div>
-        <div class="field"><label>Bonusovy kredit</label><input id="creditBonusBonusInput" type="number" value="${rule.bonus}"></div>
-        <div class="field"><label>Interni pravidlo</label><textarea id="creditBonusNoteInput">${rule.note}. V prehledu hrace zobrazovat zaplaceno a bonus oddelene.</textarea></div>
+        <div class="field"><label>Nazev</label><input id="creditBonusNameInput" value="${draft.name}"></div>
+        <div class="field"><label>Hrac zaplati alespon</label><input id="creditBonusPaidInput" type="number" min="1" step="100" value="${draft.paid}"></div>
+        <div class="field"><label>Bonusovy kredit</label><input id="creditBonusBonusInput" type="number" min="0" step="10" value="${draft.bonus}"></div>
+        <div class="field"><label>Interni pravidlo</label><textarea id="creditBonusNoteInput">${draft.note}</textarea></div>
       </div>
-      <button class="primary-button" data-confirm="credit-bonus" data-package="${rule.name}">Ulozit bonus</button>
+      <div class="inline-actions">
+        ${rule ? `<button class="danger-button" data-confirm="credit-bonus-delete" data-package="${rule.id || rule.name}">Smazat pravidlo</button>` : ""}
+        <button class="primary-button" data-confirm="credit-bonus" data-package="${rule?.id || ""}">Ulozit pravidlo</button>
+      </div>
+    </div>
+  `;
+}
+
+function manualCreditModal(data) {
+  const player = playerRecordById(data.player) || adminPlayerDirectory[0];
+  const amount = Number(data.amount || 3000);
+  const preview = manualCreditPreview(amount);
+  const operationKey = crypto.randomUUID?.() || `credit-operation-${Date.now()}`;
+  return `
+    <div class="modal-body">
+      <div>
+        <p class="eyebrow">Rucni dobiti</p>
+        <h2 id="modalTitle">Pripsat kredit: ${player.name}</h2>
+        <p class="muted">Zadej skutecne prijatou castku. Bonus vybira system automaticky podle nejvyssi dosazene hranice klubu.</p>
+      </div>
+      <div class="profile-list">
+        <div class="profile-row"><span>Aktualni zustatek</span><strong>${formatMoney(totalCredit(player))}</strong></div>
+        <div class="profile-row"><span>Zaplaceny kredit</span><span>${formatMoney(player.paidCredit || 0)}</span></div>
+        <div class="profile-row"><span>Bonusovy kredit</span><span>${formatMoney(player.bonusCredit || 0)}</span></div>
+      </div>
+      <div class="form-grid">
+        <input id="manualCreditOperationInput" type="hidden" value="${operationKey}">
+        <div class="field"><label>Hrac zaplatil</label><input id="manualCreditAmountInput" data-credit-preview type="number" min="1" step="100" value="${amount}"></div>
+        <div class="field"><label>Zpusob prijeti klubem</label><select id="manualCreditMethodInput"><option value="cash">Hotovost</option><option value="bank">Bankovni prevod</option><option value="other">Jiny zpusob mimo portal</option></select></div>
+        <div class="field"><label>Poznamka</label><textarea id="manualCreditNoteInput">Rucni dobiti na klubu</textarea></div>
+      </div>
+      <div class="player-focus-card" id="manualCreditPreview">
+        <div class="row-top"><span><b>Pripise se</b><small>${preview.rule?.name || "Bez bonusoveho pravidla"}</small></span><strong>${formatMoney(preview.total)}</strong></div>
+        <small>${formatMoney(preview.paid)} zaplaceny kredit + ${formatMoney(preview.bonus)} bonusovy kredit</small>
+      </div>
+      <button class="primary-button" data-confirm="credit-topup" data-player="${player.id}">Potvrdit prijeti penez a pripsat kredit</button>
     </div>
   `;
 }
@@ -7287,7 +9981,7 @@ function productPollModal(data) {
         </div>
         <div class="form-grid">
           <div class="field"><label>Otazka</label><input id="pollTitleInput" value="Co chcete otestovat na kurtech?"></div>
-          <div class="field"><label>Bezi do</label><input id="pollEndInput" value="${formatShortPortalDate(new Date(appToday.getFullYear(), appToday.getMonth(), appToday.getDate() + 3))}"></div>
+          <div class="field"><label>Bezi do</label><input id="pollEndInput" type="date" value="${dateInputValue(new Date(appToday.getFullYear(), appToday.getMonth(), appToday.getDate() + 3))}"></div>
           <div class="field"><label>Moznosti</label><textarea id="pollOptionsInput">A - rakety Babolat
 B - rakety Wilson
 C - boty Wilson
@@ -7326,9 +10020,14 @@ D - tricka Nike / Puma</textarea></div>
           <div class="profile-row"><span>Dodavatel</span><span>${poll.supplierNote}</span></div>
         </div>
         ${state.role === "admin" ? `
+          <div class="booking-field-grid">
+            <div class="field"><label>Navrzeny den akce</label><input id="pollEventDateInput" type="date" value="${dateInputValue(nextTournamentSaturday())}"></div>
+            <div class="field"><label>Od</label><input id="pollEventStartInput" type="time" step="1800" value="10:00"></div>
+            <div class="field"><label>Do</label><input id="pollEventEndInput" type="time" step="1800" value="14:00"></div>
+          </div>
           <div class="inline-actions">
             <button class="secondary-button" data-confirm="poll-remind" data-poll="${poll.id}">Pripomenout nehlasujicim</button>
-            <button class="primary-button" data-confirm="poll-close" data-poll="${poll.id}">Ukoncit a vytvorit akci</button>
+            <button class="primary-button" data-confirm="poll-close" data-poll="${poll.id}">Ukoncit a poslat obchodnikovi</button>
           </div>
         ` : voted ? `<button class="primary-button" data-confirm="close">Hlas ulozen</button>` : ""}
       </div>
@@ -7373,6 +10072,7 @@ function specialOccupancyModal(data) {
       <div class="form-grid">
         <div class="field"><label>Typ</label><select id="specialTypeInput">${specialOccupancyTypes.map((item) => `<option value="${item.type}" ${item.type === type.type ? "selected" : ""}>${item.label}</option>`).join("")}</select></div>
         <div class="field"><label>Kurt</label><select id="specialCourtInput">${courts.map((court) => `<option value="${court.id}" ${court.id === selectedCourt.id ? "selected" : ""}>${court.name} · ${court.surface}</option>`).join("")}<option value="all">Vsechny kurty</option></select></div>
+        <div class="field"><label>Den a datum</label><input id="specialDateInput" type="date" value="${selectedBookingIsoDate()}"></div>
         <div class="field"><label>Nazev blokace</label><input id="specialTitleInput" value="${type.label}"></div>
         <div class="field"><label>Cas od</label><input id="specialStartInput" value="${start}"></div>
         <div class="field"><label>Cas do</label><input id="specialEndInput" value="${end}"></div>
@@ -7402,7 +10102,7 @@ function legacyProductOrderModal(data) {
       <div class="form-grid">
         <div class="field"><label>Jak to chci resit</label><select><option>vyzvednout na klubu</option><option>pridat k me pristi rezervaci</option><option>pridat do nejblizsi akce</option><option>zeptat se spravce</option></select></div>
         <div class="field"><label>Poznamka</label><textarea>Velikost, grip, barva nebo termin, kdy chci produkt vyzkouset.</textarea></div>
-        <div class="field"><label>Platba</label><select><option>strhnout z kreditu</option><option>QR kod po potvrzeni</option><option>zaplatit na klubu</option></select></div>
+        <div class="field"><label>Uhrada objednavky</label><select><option>pri prevzeti na klubu</option><option>po dohode se spravcem</option></select></div>
       </div>
       <button class="primary-button" data-confirm="product-order">Odeslat objednavku</button>
     </div>
@@ -7428,8 +10128,8 @@ function productOrderModal(data) {
       </div>
       <div class="form-grid">
         <div class="field"><label>Jak to chci resit</label><select id="orderDeliveryInput"><option value="pickup">Vyzvednout na klubu</option><option value="reservation" selected>Pridat k me pristi rezervaci</option><option value="event">Pridat do nejblizsi akce</option></select></div>
-        <div class="field"><label>Kdy vyzvednout na klubu</label><input id="orderPickupInput" value="Patek 17:00"></div>
-        <div class="field"><label>Moje rezervace</label><select id="orderReservationInput">${reservations.map((reservation, index) => `<option value="${index}">${reservationDateLabel(reservation)} ${reservation.start}, ${reservation.court.name}</option>`).join("")}</select></div>
+        <div class="field"><label>Kdy vyzvednout na klubu</label><input id="orderPickupInput" type="date" value="${selectedBookingIsoDate()}"></div>
+        <div class="field"><label>Moje rezervace</label><select id="orderReservationInput">${reservations.map((reservation) => `<option value="${reservation.id}">${reservationDateLabel(reservation)} ${reservation.start}, ${reservation.court.name}</option>`).join("")}</select></div>
         <div class="field"><label>Akce</label><select id="orderEventInput">${events.map((event) => `<option value="${event.id}">${event.title} · ${event.meta}</option>`).join("")}</select></div>
         ${stringing ? `
           <div class="field"><label>Raketa</label><input value="Moje hlavni raketa"></div>
@@ -7437,7 +10137,7 @@ function productOrderModal(data) {
           <div class="field"><label>Napeti</label><select><option>doporuci vypletac</option><option>23 kg</option><option>24 kg</option><option>25 kg</option></select></div>
         ` : ""}
         <div class="field"><label>Poznamka</label><textarea id="orderNoteInput">${stringing ? "Stejne jako minule, chci mit raketu hotovou do dalsi hry." : "Velikost, grip, barva nebo co ma spravce nachystat."}</textarea></div>
-        <div class="field"><label>Platba</label><select><option>strhnout z kreditu</option><option>QR kod po potvrzeni</option><option>zaplatit na klubu</option></select></div>
+        <div class="field"><label>Uhrada objednavky</label><select><option>pri prevzeti na klubu</option><option>po dohode se spravcem</option></select></div>
       </div>
       <button class="primary-button" data-confirm="product-order">Odeslat objednavku</button>
     </div>
@@ -7468,6 +10168,15 @@ function adminOrderModal(data) {
       </div>
       <div class="form-grid">
         <div class="field"><label>Dostupnost / umoreni</label><select id="orderSourceInput"><option value="stock" ${order.source === "stock" ? "selected" : ""}>ze skladu klubu</option><option value="supplier" ${order.source === "supplier" ? "selected" : ""}>objednat od dodavatele</option><option value="check" ${order.source === "check" ? "selected" : ""}>overit dostupnost</option></select></div>
+        <div class="field"><label>Faze objednavky</label><select id="orderStatusInput">
+          <option value="new" ${order.serverStatus === "new" ? "selected" : ""}>nova objednavka</option>
+          <option value="checking" ${order.serverStatus === "checking" ? "selected" : ""}>overuji dostupnost</option>
+          <option value="ordered" ${order.serverStatus === "ordered" ? "selected" : ""}>objednano u dodavatele</option>
+          <option value="preparing" ${order.serverStatus === "preparing" ? "selected" : ""}>pripravuji na klubu</option>
+          <option value="ready" ${order.serverStatus === "ready" ? "selected" : ""}>pripraveno k predani</option>
+          <option value="completed" ${order.serverStatus === "completed" ? "selected" : ""}>predano hraci</option>
+          <option value="cancelled" ${order.serverStatus === "cancelled" ? "selected" : ""}>zruseno</option>
+        </select></div>
         <div class="field"><label>Jak vyridit</label><select><option>spojit do kluboveho baliku</option><option>pripravit k rezervaci hrace</option><option>predat vypletaci raket</option><option>pridat do nejblizsi akce</option></select></div>
         <div class="field"><label>Zprava hraci</label><textarea>${order.type === "sluzba" ? "Chces vyplest raketu pred dalsi rezervaci? Muzes ji nechat na klubu po hre a pripravime ji do dalsi hry." : "Mame pro tebe veci k vyzkouseni nebo vyzvednuti pri pristi rezervaci."}</textarea></div>
         <div class="field"><label>Zprava vypletaci / partnerovi</label><textarea>Na klubu jsou rakety ke sberu. Prijed si pro ne a vrat je hotove do dalsich rezervaci hracu.</textarea></div>
@@ -7546,11 +10255,11 @@ function knockoutList(tournament) {
 function tournamentDetailModal(data) {
   const tournament = tournamentById(data.tournament);
   const currentName = currentUser.name.split(" ")[0];
-  const registered = tournament.participants.includes(currentName);
+  const registered = platformContext.enabled ? tournament.isRegistered : tournament.participants.includes(currentName);
   return `
     <div class="modal-body">
       <div>
-        <p class="eyebrow">Single turnaj</p>
+        <p class="eyebrow">${tournament.type === "double" ? "Double turnaj" : "Single turnaj"}</p>
         <h2 id="modalTitle">${tournament.title}</h2>
         <p class="muted">${tournament.date} · uzaverka ${tournament.deadline} · ${tournament.entryFee}</p>
       </div>
@@ -7561,11 +10270,11 @@ function tournamentDetailModal(data) {
       </div>
       <div class="tournament-table">
         <div class="table-head"><span>Prihlaseni</span><span>Status</span></div>
-        ${tournament.participants.map((name, index) => `<div class="table-row"><span>${index + 1}. ${name}</span><span>prihlasen</span></div>`).join("")}
+        ${(tournament.type === "double" ? tournament.teams.map((team) => team.name) : tournament.participants).map((name, index) => `<div class="table-row"><span>${index + 1}. ${name}</span><span>prihlasen</span></div>`).join("")}
       </div>
       ${tournamentTables(tournament)}
       ${knockoutList(tournament)}
-      ${tournament.status === "registration" && state.role === "player" ? `<button class="primary-button" data-confirm="tournament-register" data-tournament="${tournament.id}">${registered ? "Odhlasit se" : "Prihlasit se"}</button>` : ""}
+      ${tournament.status === "registration" && state.role === "player" ? `${tournament.type === "double" && !registered ? `<div class="field"><label>Spoluhrac do paru</label><select id="tournamentPartnerInput"><option value="">Vyber spoluhrace</option>${players.filter((player) => player.id !== currentPersonaId() && platformContext.membersByPersona.get(player.id)).map((player) => `<option value="${platformContext.membersByPersona.get(player.id)}">${player.name}</option>`).join("")}</select></div>` : ""}<button class="primary-button" data-confirm="tournament-register" data-tournament="${tournament.id}">${registered ? "Odhlasit par" : tournament.type === "double" ? "Prihlasit par" : "Prihlasit se"}</button>` : ""}
       <button class="primary-button" data-confirm="close">Zavrit</button>
     </div>
   `;
@@ -7580,16 +10289,18 @@ function tournamentAdminModal(data) {
       <div class="modal-body">
         <div>
           <p class="eyebrow">Novy turnaj</p>
-          <h2 id="modalTitle">Single turnaj</h2>
-          <p class="muted">MVP: prihlaseni hracu, uzaverka, skupiny, vysledky, pavouk a archiv.</p>
+          <h2 id="modalTitle">Klubovy turnaj</h2>
+          <p class="muted">Single i double: prihlaseni, uzaverka, skupiny, vysledky, pavouk a archiv.</p>
         </div>
         <div class="form-grid">
-          <div class="field"><label>Nazev</label><input id="tournamentTitleInput" value="Klubovy single turnaj"></div>
+          <div class="field"><label>Typ</label><select id="tournamentTypeInput"><option value="single">Single</option><option value="double">Double</option></select></div>
+          <div class="field"><label>Nazev</label><input id="tournamentTitleInput" value="Klubovy turnaj"></div>
           <div class="field"><label>Datum startu</label><input id="tournamentDateInput" type="date" value="${dateInputValue(tournamentDate)}"></div>
           <div class="field"><label>Cas startu</label><input id="tournamentStartTimeInput" type="time" value="09:00"></div>
           <div class="field"><label>Datum uzaverky</label><input id="tournamentDeadlineInput" type="date" value="${dateInputValue(deadlineDate)}"></div>
           <div class="field"><label>Cas uzaverky</label><input id="tournamentDeadlineTimeInput" type="time" value="20:00"></div>
           <div class="field"><label>Max hracu</label><input id="tournamentMaxInput" value="16"></div>
+          <div class="field"><label>Startovne / hrac (Kc)</label><input id="tournamentFeeInput" type="number" min="0" step="50" value="250"><small>Pro turnaj zdarma zadej 0.</small></div>
         </div>
         <button class="primary-button" data-confirm="tournament-create">Vytvorit turnaj</button>
       </div>
@@ -7598,13 +10309,14 @@ function tournamentAdminModal(data) {
   return `
     <div class="modal-body">
       <div>
-        <p class="eyebrow">Sprava single turnaje</p>
+        <p class="eyebrow">Sprava ${tournament.type === "double" ? "double" : "single"} turnaje</p>
         <h2 id="modalTitle">${tournament.title}</h2>
         <p class="muted">${tournament.date} · uzaverka ${tournament.deadline} · stav ${tournament.status}</p>
       </div>
       <div class="profile-list">
-        <div class="profile-row"><span>Hraci</span><span>${tournament.participants.length}/${tournament.maxPlayers}</span></div>
+        <div class="profile-row"><span>${tournament.type === "double" ? "Pary" : "Hraci"}</span><span>${tournament.type === "double" ? tournament.teams.length : tournament.participants.length}/${tournament.type === "double" ? Math.floor(tournament.maxPlayers / 2) : tournament.maxPlayers}</span></div>
         <div class="profile-row"><span>Kurty</span><span>${tournament.courts.join(", ")}</span></div>
+        <div class="profile-row"><span>Startovne</span><span>${tournament.entryFee}</span></div>
         <div class="profile-row"><span>Pravidla</span><span>${tournament.rules}</span></div>
       </div>
       ${tournamentTables(tournament)}
@@ -7626,6 +10338,7 @@ function adminPlayerModal(data) {
   const playerFirstName = player.name.split(" ")[0];
   const orders = playerOrders.filter((order) => order.player.includes(playerFirstName));
   const nextHours = Math.max(0, loyalty.next.hours - player.playedHours);
+  const creditHistory = playerCreditTransactions(player.id);
   return `
     <div class="modal-body player-admin-modal">
       <div class="profile-hero player-hero-card">
@@ -7667,6 +10380,18 @@ function adminPlayerModal(data) {
 
       <div class="service-card">
         <div class="row-top">
+          <span><b>Kredit hrace</b><small>Zaplacena a bonusova cast se uctuji oddelene.</small></span>
+          <button class="primary-button" data-action="credit-topup" data-player="${player.id}">Pripsat kredit</button>
+        </div>
+        <div class="profile-list">
+          ${creditHistory.slice(0, 5).map((transaction) => `
+            <div class="profile-row"><span><strong>${formatMoney(transaction.paid)} prijato</strong><small>${formatPortalDate(new Date(transaction.createdAt))} · ${transaction.method}</small></span><span>+${formatMoney(transaction.bonus)} bonus</span></div>
+          `).join("") || `<div class="profile-row"><span>Bez pohybu</span><span>0</span></div>`}
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="row-top">
           <span><b>Objednavky a servis</b><small>${orders.length ? orders.map((order) => order.product).join(", ") : "zatim nic aktivniho"}</small></span>
           <strong>${orders.length}</strong>
         </div>
@@ -7688,15 +10413,35 @@ function adminPlayerModal(data) {
 
       <div class="form-grid">
         <div class="field"><label>Poznamka spravce ke sleve</label><textarea id="discountReasonInput">${player.discountReason}</textarea></div>
-        <div class="field"><label>Interni poznamky spravce</label><textarea id="adminNoteInput">${player.adminNote}</textarea></div>
+        <div class="field"><label>Interni poznamky spravce</label><textarea id="adminNoteInput">${visibleAdminNote(player)}</textarea></div>
       </div>
       <div class="inline-actions">
-        <button class="secondary-button" data-confirm="admin-save">Navrhnout do hledane hry</button>
         <button class="primary-button" data-confirm="admin-player-save" data-player="${player.id}">Ulozit hrace</button>
       </div>
     </div>
   `;
 }
+
+function privacyModal() {
+  const pushOn = platformNotificationPreferences.push_enabled !== 0;
+  const attendanceOn = platformNotificationPreferences.attendance_reminder_enabled !== 0;
+  const productOn = platformNotificationPreferences.product_reminder_enabled === 1;
+  return `<div class="modal-body"><div><p class="eyebrow">Soukromi</p><h2 id="modalTitle">Moje data a oznameni</h2><p class="muted">Souhlasy jsou verzovane. Export obsahuje jen tvoje data; zadost o vymazani projde kontrolou zakonne archivace plateb.</p></div><div class="form-grid"><label class="profile-row"><span>Push notifikace</span><input id="privacyPushInput" type="checkbox" ${pushOn ? "checked" : ""}></label><label class="profile-row"><span>Pripominka ucasti den predem</span><input id="privacyAttendanceInput" type="checkbox" ${attendanceOn ? "checked" : ""}></label><label class="profile-row"><span>Servisni nabidky a vyplet</span><input id="privacyProductInput" type="checkbox" ${productOn ? "checked" : ""}></label></div><div class="inline-actions"><button class="secondary-button" data-confirm="privacy-export">Stahnout moje data</button><button class="danger-button" data-confirm="privacy-erase">Pozadat o vymazani</button><button class="primary-button" data-confirm="privacy-save">Ulozit volby</button></div></div>`;
+}
+
+function connectionsModal() {
+  const profile=platformConnections.profile||{}; const connections=platformConnections.connections||[];
+  return `<div class="modal-body"><div><p class="eyebrow">Meziklubove propojeni</p><h2 id="modalTitle">Soukromi pratele</h2><p class="muted">Jine kluby nikdy neuvidi jejich seznamy hracu. Najit lze pouze presny identifikator hrace, ktery se sam zverejnil.</p></div><div class="form-grid"><div class="field"><label>Muj identifikator</label><input id="connectionHandleInput" value="${profile.publicHandle||""}" placeholder="napr. radim-tenis"></div><div class="field"><label>Viditelnost</label><select id="connectionVisibilityInput"><option value="private" ${profile.discoverability==="private"?"selected":""}>Soukromy</option><option value="exact-handle" ${profile.discoverability==="exact-handle"?"selected":""}>Najitelny jen presnym ID</option><option value="invite-only" ${profile.discoverability==="invite-only"?"selected":""}>Jen pozvanky</option></select></div><button class="secondary-button" data-confirm="connection-profile">Ulozit viditelnost</button><div class="field"><label>Presne ID jineho hrace</label><input id="connectionSearchInput" placeholder="hrac-id"></div><button class="primary-button" data-confirm="connection-request">Poslat zadost</button></div><div class="profile-list">${connections.map((item)=>`<div class="profile-row"><span><strong>${item.displayName}</strong><small>${item.publicHandle||"soukromy profil"}</small></span><span>${item.status}${item.status==="pending"&&!item.requestedByMe?`<button class="small-button" data-confirm="connection-accept" data-user="${item.userId}">Prijmout</button>`:""}</span></div>`).join("")||`<div class="profile-row"><span>Zatim bez meziklubovych pratel</span></div>`}</div></div>`;
+}
+
+async function savePrivacyPreferences(){try{const push=document.querySelector("#privacyPushInput")?.checked!==false;const attendance=document.querySelector("#privacyAttendanceInput")?.checked!==false;const product=document.querySelector("#privacyProductInput")?.checked===true;await platformRequest("/api/v2/me/notification-preferences",{method:"PUT",body:JSON.stringify({pushEnabled:push,attendanceReminderEnabled:attendance,productReminderEnabled:product})});await platformRequest("/api/v2/me/privacy",{method:"PUT",body:JSON.stringify({purpose:"service_notifications",granted:push,policyVersion:platformPrivacy.policyVersion||"2026-08-01"})});platformNotificationPreferences={push_enabled:push?1:0,attendance_reminder_enabled:attendance?1:0,product_reminder_enabled:product?1:0};lastActionMessage="Nastaveni soukromi a oznameni je ulozene.";return true;}catch(error){lastActionMessage=error.message;return false;}}
+async function exportMyData(){try{const data=await platformRequest("/api/v2/me/export");const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const link=document.createElement("a");link.href=url;link.download=`moje-data-${new Date().toISOString().slice(0,10)}.json`;link.click();URL.revokeObjectURL(url);lastActionMessage="Export osobnich dat je pripraveny.";return true;}catch(error){lastActionMessage=error.message;return false;}}
+async function requestErasure(){try{await platformRequest("/api/v2/me/privacy-requests",{method:"POST",body:JSON.stringify({type:"erase"})});lastActionMessage="Zadost o vymazani byla bezpecne zaznamenana.";return true;}catch(error){lastActionMessage=error.message;return false;}}
+async function saveConnectionProfile(){try{await platformRequest("/api/v2/me/discoverability",{method:"PUT",body:JSON.stringify({publicHandle:document.querySelector("#connectionHandleInput")?.value||"",discoverability:document.querySelector("#connectionVisibilityInput")?.value||"private"})});platformConnections=await platformRequest("/api/v2/me/connections");lastActionMessage="Viditelnost profilu je ulozena.";return true;}catch(error){lastActionMessage=error.message;return false;}}
+async function requestGlobalConnection(){try{await platformRequest("/api/v2/connections",{method:"POST",body:JSON.stringify({publicHandle:document.querySelector("#connectionSearchInput")?.value||""})});platformConnections=await platformRequest("/api/v2/me/connections");lastActionMessage="Meziklubova zadost byla odeslana.";return true;}catch(error){lastActionMessage=error.message;return false;}}
+async function acceptGlobalConnection(userId){try{await platformRequest(`/api/v2/connections/${userId}/respond`,{method:"POST",body:JSON.stringify({response:"accept"})});platformConnections=await platformRequest("/api/v2/me/connections");lastActionMessage="Propojeni je potvrzene.";return true;}catch(error){lastActionMessage=error.message;return false;}}
+async function toggleClubModule(key,enabled){try{const current=platformModules.find((module)=>module.key===key);const result=await platformRequest(`/api/v2/clubs/${platformContext.clubId}/modules/${key}`,{method:"PUT",body:JSON.stringify({enabled:enabled!=="true",config:current?.config||{}})});platformModules=result.modules||[];lastActionMessage=`Modul ${key} je ${enabled==="true"?"vypnuty":"zapnuty"}.`;return true;}catch(error){lastActionMessage=error.message;return false;}}
+async function remindReservationPlayers(reservationId){try{const result=await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${reservationId}/remind`,{method:"POST"});lastActionMessage=`Upozorneni dostalo ${result.recipients||0} hracu.`;return true;}catch(error){lastActionMessage=error.message;return false;}}
 
 function closeModal() {
   modalBackdrop.hidden = true;
@@ -7709,7 +10454,25 @@ function showToast(message) {
   window.setTimeout(() => toast.classList.remove("show"), 2600);
 }
 
-document.addEventListener("click", (event) => {
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && activeHelpTour) {
+    stopHelpTour();
+    return;
+  }
+  if (event.key !== "Enter" || event.target?.id !== "adminPlayerSearchInput") return;
+  event.preventDefault();
+  state.adminPlayerSearch = event.target.value.trim();
+  render();
+});
+
+document.addEventListener("click", async (event) => {
+  const helpTourControl = event.target.closest("[data-help-tour]");
+  if (helpTourControl) {
+    const control = helpTourControl.dataset.helpTour;
+    if (control === "close") stopHelpTour();
+    else moveHelpTour(control);
+    return;
+  }
   const role = event.target.closest("[data-role]");
   const nav = event.target.closest("[data-view]");
   const link = event.target.closest("[data-view-link]");
@@ -7722,7 +10485,9 @@ document.addEventListener("click", (event) => {
   const toggleSection = event.target.closest("[data-toggle-section]");
   const confirm = event.target.closest("[data-confirm]");
 
-  if (role && isLocalTestingMode()) {
+  if (activeHelpTour && (role || nav || link)) stopHelpTour();
+
+  if (role && isLocalTestingMode() && !platformContext.enabled) {
     state.role = role.dataset.role;
     if (role.dataset.persona) setCurrentPersona(role.dataset.persona);
     state.view = "home";
@@ -7752,6 +10517,7 @@ document.addEventListener("click", (event) => {
       const delta = Math.round((selected.getTime() - appToday.getTime()) / 86400000);
       if (delta >= 0 && delta <= 6) state.selectedDay = delta;
     }
+    render();
     openModal("book", { time: "17:00" });
   }
 
@@ -7792,6 +10558,10 @@ document.addEventListener("click", (event) => {
 
   if (confirm) {
     const kind = confirm.dataset.confirm;
+    if (kind === "help-start") {
+      startHelpTour(confirm.dataset.topic);
+      return;
+    }
     if (kind === "login-send") {
       if (requestDemoLoginPassword()) {
         modalContent.innerHTML = loginModal();
@@ -7800,117 +10570,300 @@ document.addEventListener("click", (event) => {
       return;
     }
     if (kind === "login-enter") {
-      if (completeDemoLogin()) {
+      if (await completeDemoLogin()) {
         closeModal();
         render();
         refreshPushSubscription();
         showToast("Prihlaseni probehlo.");
+      } else {
+        showToast(lastActionMessage || "Prihlaseni se nepodarilo.");
       }
+      return;
+    }
+    if (kind === "logout") {
+      await completeLogout();
+      closeModal();
+      render();
+      showToast(lastActionMessage);
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "password-change") {
+      if (!await changeOwnPassword()) {
+        showToast(lastActionMessage || "Heslo se nepodarilo zmenit.");
+        return;
+      }
+      closeModal();
+      render();
+      showToast(lastActionMessage);
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "privacy-save" && !await savePrivacyPreferences()) { showToast(lastActionMessage); return; }
+    if (kind === "privacy-export" && !await exportMyData()) { showToast(lastActionMessage); return; }
+    if (kind === "privacy-erase" && !await requestErasure()) { showToast(lastActionMessage); return; }
+    if (kind === "connection-profile" && !await saveConnectionProfile()) { showToast(lastActionMessage); return; }
+    if (kind === "connection-request" && !await requestGlobalConnection()) { showToast(lastActionMessage); return; }
+    if (kind === "connection-accept" && !await acceptGlobalConnection(confirm.dataset.user)) { showToast(lastActionMessage); return; }
+    if (kind === "module-toggle" && !await toggleClubModule(confirm.dataset.module, confirm.dataset.enabled)) { showToast(lastActionMessage); return; }
+    if (kind === "accounting-export") { await exportAccountingCsv(); showToast(lastActionMessage); return; }
+    if (kind === "admin-reservation-remind" && !await remindReservationPlayers(confirm.dataset.reservation)) { showToast(lastActionMessage); return; }
+    if (kind === "admin-player-search") {
+      state.adminPlayerSearch = document.querySelector("#adminPlayerSearchInput")?.value?.trim() || "";
+      render();
+      return;
+    }
+    if (kind === "admin-player-search-clear") {
+      state.adminPlayerSearch = "";
+      render();
       return;
     }
     if (kind === "admin-price-save") {
       const courtId = confirm.dataset.court;
-      if (!savePriceRule(courtId)) {
-        showToast("Cenovy usek nejde ulozit. Zkontroluj kurt, cas od-do a cenu.");
+      if (!await savePriceRule(courtId)) {
+        showToast(lastActionMessage || "Cenovy usek nejde ulozit. Zkontroluj kurt, cas od-do a cenu.");
+        lastActionMessage = "";
         return;
       }
       modalContent.innerHTML = adminCourtModal({ court: courtId });
       render();
-      showToast("Cenovy usek kurtu je ulozeny.");
+      showToast(lastActionMessage || "Cenovy usek kurtu je ulozeny.");
+      lastActionMessage = "";
       return;
     }
-    if (kind === "book" && !createBookingReservation()) {
+    if (kind === "admin-price-delete") {
+      const courtId = confirm.dataset.court;
+      if (!await removePriceRule(courtId, confirm.dataset.rule)) {
+        showToast(lastActionMessage || "Cenovy usek se nepodarilo odebrat.");
+        lastActionMessage = "";
+        return;
+      }
+      modalContent.innerHTML = adminCourtModal({ court: courtId });
+      render();
+      showToast(lastActionMessage);
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "book" && !await createBookingReservation()) {
       showToast(lastActionMessage || "Rezervaci se nepodarilo vytvorit.");
       return;
     }
-    if (kind === "cancel") declineReservation(Number(confirm.dataset.reservation || 0));
-    if (kind === "undo-cancel" && !undoReservationDecline(Number(confirm.dataset.reservation || 0))) {
+    if (kind === "admin-booking-create" && !await createAdminBooking(false)) {
+      showToast(lastActionMessage || "Rucni rezervaci se nepodarilo vytvorit.");
+      return;
+    }
+    if (kind === "admin-recurring-create" && !await createAdminBooking(true)) {
+      showToast(lastActionMessage || "Trvalou rezervaci se nepodarilo vytvorit.");
+      return;
+    }
+    if (kind === "admin-series-cancel" && !await cancelAdminReservationSeries(confirm.dataset.series)) {
+      showToast(lastActionMessage || "Budouci terminy se nepodarilo ukoncit.");
+      return;
+    }
+    if (kind === "cancel" && !await declineReservation(Number(confirm.dataset.reservation || 0))) {
+      showToast(lastActionMessage || "Ucast se nepodarilo zrusit.");
+      return;
+    }
+    if (kind === "undo-cancel" && !await undoReservationDecline(Number(confirm.dataset.reservation || 0))) {
       showToast(lastActionMessage || "Omluvenku uz nejde vzit zpet.");
       return;
     }
     if (kind === "find-player") createPlayerSearch();
     if (kind === "join" && confirm.dataset.event) {
-      joinEventForPlayer(confirm.dataset.event);
+      if (!await joinEventForPlayer(confirm.dataset.event)) {
+        showToast(lastActionMessage || "Na akci se nepodarilo prihlasit.");
+        lastActionMessage = "";
+        return;
+      }
       persistData();
     }
     if (kind === "guest") state.guestMode = true;
     if (kind === "attendance") confirmAttendanceFromNotification(confirm.dataset.notification);
     if (kind === "decline-attendance") declineAttendanceFromNotification(confirm.dataset.notification);
     if (kind === "invite-game" && confirm.dataset.proposal) {
-      if (!confirmGameProposal(Number(confirm.dataset.proposal || 0))) {
+      const proposalAccepted = platformContext.enabled && confirm.dataset.proposalId
+        ? await confirmGameProposalById(confirm.dataset.proposalId)
+        : confirmGameProposal(Number(confirm.dataset.proposal || 0));
+      if (!proposalAccepted) {
         showToast(lastActionMessage || "Navrh se nepodarilo potvrdit.");
         return;
       }
     }
     if (kind === "invite-game" && !confirm.dataset.proposal) {
-      if (!createGameInvitation()) {
+      if (!await createGameInvitation()) {
         showToast(lastActionMessage || "Pozvanku se nepodarilo odeslat.");
         return;
       }
     }
     if (kind === "invite-event") createEventInvitation(confirm.dataset.event);
-    if (kind === "accept-invite") confirmGameProposalById(confirm.dataset.proposalId);
-    if (kind === "decline-invite") declineGameProposal(confirm.dataset.proposalId);
-    if (kind === "accept-event") acceptEventInvite(confirm.dataset.event, confirm.dataset.notification);
+    if (kind === "accept-invite" && !await confirmGameProposalById(confirm.dataset.proposalId)) {
+      showToast(lastActionMessage || "Pozvanku se nepodarilo potvrdit.");
+      return;
+    }
+    if (kind === "decline-invite" && !await declineGameProposal(confirm.dataset.proposalId)) {
+      showToast(lastActionMessage || "Pozvanku se nepodarilo odmitnout.");
+      return;
+    }
+    if (kind === "accept-event" && !await acceptEventInvite(confirm.dataset.event, confirm.dataset.notification)) {
+      showToast(lastActionMessage || "Na akci se nepodarilo prihlasit.");
+      lastActionMessage = "";
+      return;
+    }
     if (kind === "decline-event") {
-      notifications.splice(0, notifications.length, ...notifications.filter((item) => item.id !== confirm.dataset.notification));
-      persistData();
+      if (!await dismissPlatformNotification(confirm.dataset.notification)) {
+        showToast(lastActionMessage || "Oznameni se nepodarilo uzavrit.");
+        return;
+      }
     }
     if (kind === "dismiss-notification") {
-      notifications.splice(0, notifications.length, ...notifications.filter((item) => item.id !== confirm.dataset.notification));
-      persistData();
+      if (!await dismissPlatformNotification(confirm.dataset.notification)) {
+        showToast(lastActionMessage || "Oznameni se nepodarilo uzavrit.");
+        return;
+      }
     }
     if (kind === "friend-request") {
-      if (!createFriendRequest(confirm.dataset.player)) {
+      if (!await createFriendRequest(confirm.dataset.player)) {
         showToast(lastActionMessage || "Zadost o kamaradstvi se nepodarilo odeslat.");
         lastActionMessage = "";
         return;
       }
     }
-    if (kind === "accept-friend") acceptFriendRequest(confirm.dataset.notification);
-    if (kind === "decline-friend") declineFriendRequest(confirm.dataset.notification);
-    if (kind === "accept-replacement-invite") acceptReplacementInvite(confirm.dataset.notification);
-    if (kind === "decline-replacement-invite") declineReplacementInvite(confirm.dataset.notification);
-    if (kind === "accept-booking-invite") acceptBookingInvite(confirm.dataset.notification);
-    if (kind === "decline-booking-invite") declineBookingInvite(confirm.dataset.notification);
+    if (kind === "accept-friend" && !await acceptFriendRequest(confirm.dataset.notification)) {
+      showToast(lastActionMessage || "Kamaradstvi se nepodarilo potvrdit.");
+      return;
+    }
+    if (kind === "decline-friend" && !await declineFriendRequest(confirm.dataset.notification)) {
+      showToast(lastActionMessage || "Zadost se nepodarilo odmitnout.");
+      return;
+    }
+    if (kind === "accept-replacement-invite" && !await acceptReplacementInvite(confirm.dataset.notification)) {
+      showToast(lastActionMessage || "Souhlas nahradnika se nepodarilo ulozit."); return;
+    }
+    if (kind === "decline-replacement-invite" && !await declineReplacementInvite(confirm.dataset.notification)) {
+      showToast(lastActionMessage || "Odmitnuti nahradnika se nepodarilo ulozit."); return;
+    }
+    if (kind === "platform-replacement-vote" && !await voteForPlatformReplacement(confirm.dataset.notification)) {
+      showToast(lastActionMessage || "Hlas se nepodarilo ulozit."); return;
+    }
+    if (kind === "counter-send" && !await sendGameCounterproposal(confirm.dataset.proposalId)) {
+      showToast(lastActionMessage || "Protinavrh se nepodarilo odeslat."); return;
+    }
+    if (kind === "counter-accept" && !await respondGameCounterproposal(confirm.dataset.notification, "accept")) {
+      showToast(lastActionMessage || "Protinavrh se nepodarilo prijmout."); return;
+    }
+    if (kind === "counter-decline" && !await respondGameCounterproposal(confirm.dataset.notification, "decline")) {
+      showToast(lastActionMessage || "Protinavrh se nepodarilo odmitnout."); return;
+    }
+    if (kind === "accept-booking-invite" && !await acceptBookingInvite(confirm.dataset.notification)) {
+      showToast(lastActionMessage || "Pozvanku se nepodarilo potvrdit.");
+      return;
+    }
+    if (kind === "decline-booking-invite" && !await declineBookingInvite(confirm.dataset.notification)) {
+      showToast(lastActionMessage || "Pozvanku se nepodarilo odmitnout.");
+      return;
+    }
     if (kind === "join-slot") joinOpenSlot(confirm.dataset.court, confirm.dataset.time);
     if (kind === "replacement") acceptReplacementCandidate(Number(confirm.dataset.reservation || 3), confirm.dataset.candidate || "");
-    if (kind === "event") saveAdminEvent();
-    if (kind === "special-occupancy") saveSpecialOccupancy();
-    if (kind === "admin-settings-save") saveAdminSettings();
-    if (kind === "admin-court-save") saveCourtSettings(confirm.dataset.court);
-    if (kind === "admin-court-delete") removeCourt(confirm.dataset.court);
-    if (kind === "admin-player-save") saveAdminPlayer(confirm.dataset.player);
-    if (kind === "admin-player-create" && !createAdminPlayerFromModal()) {
+    if (kind === "event" && !await saveAdminEvent()) {
+      showToast(lastActionMessage || "Akci se nepodarilo vytvorit.");
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "special-occupancy" && !await saveSpecialOccupancy()) {
+      showToast(lastActionMessage || "Specialni obsazenost se nepodarilo ulozit.");
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "admin-settings-save" && !await saveAdminSettings()) {
+      showToast(lastActionMessage || "Nastaveni klubu se nepodarilo ulozit.");
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "admin-court-save" && !await saveCourtSettings(confirm.dataset.court)) {
+      showToast(lastActionMessage || "Kurt se nepodarilo ulozit.");
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "admin-court-delete" && !await removeCourt(confirm.dataset.court)) {
+      showToast(lastActionMessage || "Kurt se nepodarilo odebrat.");
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "admin-player-save" && !await saveAdminPlayer(confirm.dataset.player)) {
+      showToast(lastActionMessage || "Profil hrace se nepodarilo ulozit.");
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "admin-player-create" && !await createAdminPlayerFromModal()) {
       showToast(lastActionMessage || "Hrace se nepodarilo vytvorit.");
       lastActionMessage = "";
       return;
     }
-    if (kind === "admin-event-save") saveAdminEventDetails(confirm.dataset.event);
-    if (kind === "admin-event-cancel") cancelAdminEvent(confirm.dataset.event);
-    if (kind === "seller-request") requestSellerApproval(confirm.dataset.event);
-    if (kind === "seller-confirm-event") sellerConfirmEvent(confirm.dataset.event);
-    if (kind === "event-publish") publishApprovedEvent(confirm.dataset.event);
-    if (kind === "product-order") createProductOrder();
-    if (kind === "admin-order") saveAdminOrder(confirm.dataset.product, confirm.dataset.player);
+    if (kind === "admin-event-save" && !await saveAdminEventDetails(confirm.dataset.event)) {
+      showToast(lastActionMessage || "Akci se nepodarilo ulozit.");
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "admin-event-cancel" && !await cancelAdminEvent(confirm.dataset.event)) {
+      showToast(lastActionMessage || "Akci se nepodarilo zrusit.");
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "seller-request" && !await requestSellerApproval(confirm.dataset.event)) { showToast(lastActionMessage || "Pozadavek se nepodarilo odeslat."); return; }
+    if (kind === "seller-confirm-event" && !await sellerConfirmEvent(confirm.dataset.event)) { showToast(lastActionMessage || "Potvrzeni se nepodarilo ulozit."); return; }
+    if (kind === "event-publish" && !await publishApprovedEvent(confirm.dataset.event)) { showToast(lastActionMessage || "Akci se nepodarilo publikovat."); return; }
+    if (kind === "product-order" && !await createProductOrder()) {
+      showToast(lastActionMessage || "Objednavku se nepodarilo odeslat.");
+      return;
+    }
+    if (kind === "admin-order" && !await saveAdminOrder(confirm.dataset.product, confirm.dataset.player)) {
+      showToast(lastActionMessage || "Objednavku se nepodarilo ulozit.");
+      return;
+    }
     if (kind === "admin-invite") sendAdminInvite(confirm.dataset.player, confirm.dataset.court, confirm.dataset.time);
-    if (kind === "credit-bonus") saveCreditBonusRule(confirm.dataset.package);
+    if (kind === "credit-bonus" && !await saveCreditBonusRule(confirm.dataset.package)) {
+      showToast(lastActionMessage || "Bonusove pravidlo se nepodarilo ulozit.");
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "credit-bonus-delete" && !await deleteCreditBonusRule(confirm.dataset.package)) {
+      showToast(lastActionMessage || "Bonusove pravidlo se nepodarilo smazat.");
+      lastActionMessage = "";
+      return;
+    }
+    if (kind === "credit-topup" && !await applyManualCredit(confirm.dataset.player)) {
+      showToast(lastActionMessage || "Kredit se nepodarilo pripsat.");
+      lastActionMessage = "";
+      return;
+    }
     if (kind === "habit-alert") sendHabitAlert(confirm.dataset.player, confirm.dataset.time);
     if (kind === "sales-campaign") prepareSalesCampaign(confirm.dataset.campaign);
     if (kind === "product-poll") launchProductPoll(confirm.dataset.product);
-    if (kind === "poll-create") createPollFromModal();
-    if (kind === "poll-vote") voteInPoll(confirm.dataset.poll, confirm.dataset.option);
-    if (kind === "poll-remind") remindPollVoters(confirm.dataset.poll);
-    if (kind === "poll-close") closePollToEvent(confirm.dataset.poll);
-    if (kind === "tournament-create") createSingleTournamentFromModal();
-    if (kind === "tournament-register") toggleTournamentRegistration(confirm.dataset.tournament);
-    if (kind === "tournament-groups") generateTournamentGroups(confirm.dataset.tournament);
-    if (kind === "tournament-results") recordDemoTournamentResults(confirm.dataset.tournament);
-    if (kind === "tournament-knockout") generateTournamentKnockout(confirm.dataset.tournament);
-    if (kind === "tournament-archive") archiveTournament(confirm.dataset.tournament);
-    if (kind === "stringing-pickup") advanceStringingOrder(confirm.dataset.stringing, "with_stringer");
-    if (kind === "stringing-ready") advanceStringingOrder(confirm.dataset.stringing, "ready_for_pickup");
-    if (kind === "stringing-delivered") advanceStringingOrder(confirm.dataset.stringing, "delivered");
+    if (kind === "poll-create" && !await createPollFromModal()) { showToast(lastActionMessage || "Anketu se nepodarilo vytvorit."); return; }
+    if (kind === "poll-vote" && !await voteInPoll(confirm.dataset.poll, confirm.dataset.option)) { showToast(lastActionMessage || "Hlas se nepodarilo ulozit."); return; }
+    if (kind === "poll-remind" && !await remindPollVoters(confirm.dataset.poll)) { showToast(lastActionMessage || "Pripominku se nepodarilo odeslat."); return; }
+    if (kind === "poll-close" && !await closePollToEvent(confirm.dataset.poll)) { showToast(lastActionMessage || "Anketu se nepodarilo uzavrit."); return; }
+    if (kind === "tournament-create" && !await createSingleTournamentFromModal()) { showToast(lastActionMessage || "Turnaj se nepodarilo vytvorit."); return; }
+    if (kind === "tournament-register" && !await toggleTournamentRegistration(confirm.dataset.tournament)) { showToast(lastActionMessage || "Registraci se nepodarilo zmenit."); return; }
+    if (kind === "tournament-groups" && !await generateTournamentGroups(confirm.dataset.tournament)) { showToast(lastActionMessage || "Skupiny se nepodarilo vylosovat."); return; }
+    if (kind === "tournament-results" && !await recordDemoTournamentResults(confirm.dataset.tournament)) { showToast(lastActionMessage || "Vysledky se nepodarilo ulozit."); return; }
+    if (kind === "tournament-knockout" && !await generateTournamentKnockout(confirm.dataset.tournament)) { showToast(lastActionMessage || "Pavouk se nepodarilo vytvorit."); return; }
+    if (kind === "tournament-archive" && !await archiveTournament(confirm.dataset.tournament)) { showToast(lastActionMessage || "Turnaj se nepodarilo archivovat."); return; }
+    if (kind === "stringing-at-club" && !await advanceStringingOrder(confirm.dataset.stringing, "at_club")) {
+      showToast(lastActionMessage || "Predani rakety se nepodarilo ulozit."); return;
+    }
+    if (kind === "stringing-pickup" && !await advanceStringingOrder(confirm.dataset.stringing, "with_stringer")) {
+      showToast(lastActionMessage || "Prevzeti rakety se nepodarilo ulozit."); return;
+    }
+    if (kind === "stringing-returned" && !await advanceStringingOrder(confirm.dataset.stringing, "returned_to_club")) {
+      showToast(lastActionMessage || "Vraceni rakety se nepodarilo ulozit."); return;
+    }
+    if (kind === "stringing-ready" && !await advanceStringingOrder(confirm.dataset.stringing, "ready_for_pickup")) {
+      showToast(lastActionMessage || "Pripravu rakety se nepodarilo ulozit."); return;
+    }
+    if (kind === "stringing-delivered" && !await advanceStringingOrder(confirm.dataset.stringing, "delivered")) {
+      showToast(lastActionMessage || "Predani hraci se nepodarilo ulozit."); return;
+    }
     closeModal();
     render();
     const messages = {
@@ -7940,10 +10893,9 @@ document.addEventListener("click", (event) => {
       "decline-attendance": "Ucast je odmitnuta a system hleda nahradnika.",
       replacement: "Nahradnik s nejvice hlasy byl navrzen sestave.",
       "join-slot": "Poslal ses jako kandidat, skupina te musi potvrdit.",
-      pay: "Platba QR je oznacena jako zaplacena.",
+      pay: "Kredit spravuje klub a rucne ho pripisuje spravce.",
       photo: "Nahrani fotky bude v dalsi iteraci.",
-      guest: "Hostovsky tok je pripraveny: kod, rezervace a QR zaloha.",
-      "admin-save": "Spravcovska zmena je v prototypu pripravena.",
+      guest: "Hostovsky tok je pripraveny: kod, rezervace a uhrada na klubu.",
       "admin-settings-save": "Nastaveni klubu je ulozene.",
       "admin-court-save": "Kurt byl ulozen.",
       "admin-court-delete": "Kurt je odebrany z klubu. Posledni kurt zustava chraneny.",
@@ -7955,8 +10907,11 @@ document.addEventListener("click", (event) => {
       "seller-confirm-event": "Obchodnik potvrdil termin a dodavku.",
       "event-publish": "Akce je publikovana hracum.",
       "admin-price-save": "Cenovy usek kurtu je ulozeny.",
+      "admin-price-delete": "Cenovy usek kurtu je odebrany.",
       "admin-invite": "Last minute pozvanka hraci byla odeslana do portalu.",
       "credit-bonus": "Bonus za dobiti kreditu je ulozeny.",
+      "credit-bonus-delete": "Bonusove pravidlo je smazane.",
+      "credit-topup": "Prijem penez je zaznamenany a kredit vcetne bonusu pripsany hraci.",
       "habit-alert": "Upozorneni podle navyku hrace bylo odeslano.",
       "sales-campaign": "Prodejni akce je pridana mezi akce.",
       "product-poll": "Anketa sortimentu je spustena pro hrace.",
@@ -7991,9 +10946,25 @@ document.addEventListener("click", (event) => {
 document.addEventListener("input", (event) => {
   const discountSlider = event.target.closest("[data-discount-slider]");
   if (discountSlider) updatePlayerDiscount(discountSlider);
+  const creditPreviewInput = event.target.closest("[data-credit-preview]");
+  if (creditPreviewInput) {
+    const preview = manualCreditPreview(creditPreviewInput.value);
+    const previewElement = document.querySelector("#manualCreditPreview");
+    if (previewElement) {
+      previewElement.innerHTML = `
+        <div class="row-top"><span><b>Pripise se</b><small>${preview.rule?.name || "Bez bonusoveho pravidla"}</small></span><strong>${formatMoney(preview.total)}</strong></div>
+        <small>${formatMoney(preview.paid)} zaplaceny kredit + ${formatMoney(preview.bonus)} bonusovy kredit</small>
+      `;
+    }
+  }
 });
 
 document.addEventListener("change", (event) => {
+  if (event.target.matches?.("#clubSelector")) {
+    try { localStorage.setItem(SELECTED_CLUB_KEY, event.target.value); } catch (_) {}
+    window.location.reload();
+    return;
+  }
   const imageInput = event.target.closest("[data-image-upload]");
   if (imageInput) handleImageUpload(imageInput);
 });
@@ -8008,18 +10979,35 @@ document.querySelector("#loginButton").addEventListener("click", () => openModal
 async function bootPortal() {
   const source = await hydrateStoredData();
   if (source === "seed") persistData();
-  const hasSession = applyLoginSession();
+  let hasSession = false;
+  if (platformContext.enabled) {
+    try {
+      hasSession = await loadPlatformContext();
+    } catch (_) {
+      state.role = "guest";
+      state.view = "home";
+    }
+  } else {
+    hasSession = applyLoginSession();
+  }
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("sw.js").catch(() => {});
+      let reloadingForServiceWorker = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloadingForServiceWorker) return;
+        reloadingForServiceWorker = true;
+        window.location.reload();
+      });
+      navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then((registration) => registration.update()).catch(() => {});
     });
   }
 
   render();
   startRemoteSync();
+  startPlatformSync();
   if (hasSession) refreshPushSubscription();
-  if (!isLocalTestingMode() && !hasSession && !loginPromptShown) {
+  if ((!isLocalTestingMode() || platformContext.enabled) && !hasSession && !loginPromptShown) {
     loginPromptShown = true;
     window.setTimeout(() => openModal("login"), 300);
   }

@@ -1,6 +1,33 @@
 # Sportbar Siruch - mobilni klubovy portal
 
-Staticky PWA prototyp pro tenisove kluby. Bezi bez buildu a lze ho nahrat na bezny hosting.
+Mobilni PWA portal pro tenisove kluby se sdilenym viceklubovym API. Frontend je staticky a API bezi na Cloudflare Workers/D1/R2.
+
+## Bezpecne jadro v2
+
+Produkcni kandidat pouziva viceklubove API v `worker-v2`, normalizovana data,
+serverove relace, klubova clenstvi a moduly. Parametr `platformApi` urcuje cilove API
+pro lokalni test, staging nebo produkci.
+
+```powershell
+npm run v2:typegen
+npm run v2:typecheck
+npm run v2:test
+npm run v2:seed
+npm run v2:dev
+```
+
+V druhem terminalu spust staticky web na portu 4173 a otevri:
+
+```text
+http://localhost:4173/?platformApi=http://localhost:8788&v=123
+```
+
+V tomto rezimu prihlaseni, klubova role, kredit a bonusova pravidla pochazeji z lokalni D1.
+Hrac `radim@siruch.cz` ma heslo `siruch-radim`, spravce `spravce@siruch.cz` ma heslo
+`siruch-admin` a provozni spravce `provoz@siruch.cz` ma heslo `siruch-provoz`. `npm run v2:seed` lokalni v2 databazi vzdy znovu vycisti a naplni testovacimi ucty.
+
+Architektura a pravidla oddeleni klubu jsou popsana v `docs/ARCHITECTURE_V2.md`.
+Stav pripravenosti je v `docs/PRODUCT_READINESS.md`; provisioning, aktualizace a zalohy jsou v `docs/OPERATIONS.md`.
 
 ## Spusteni
 
@@ -17,8 +44,8 @@ $env:PORT="4213"
 node dev-server.mjs
 ```
 
-Pak otevri `http://localhost:4213/`. Server uklada sdileny stav do `data/portal-db.json`.
-Kdyz API nebezi, aplikace se vrati k puvodnimu lokalnimu rezimu v prohlizeci.
+Pak otevri `http://localhost:4213/`. Server uklada sdileny stav do `data/portal-db.json`; jde pouze o legacy offline rezim.
+Sdilene testovani a produkce pouzivaji v2 API a D1.
 
 Rychla kontrola API:
 
@@ -26,7 +53,7 @@ Rychla kontrola API:
 node -e "fetch('http://localhost:4213/api/health').then(r=>r.json()).then(console.log)"
 ```
 
-## Co prototyp ukazuje
+## Funkcni rozsah
 
 - mobilni domovskou obrazovku ve smeru Klubovy hub + Hracska komunita
 - rezervace kurtu v pulhodinovych slotech
@@ -42,7 +69,7 @@ node -e "fetch('http://localhost:4213/api/health').then(r=>r.json()).then(consol
 - klubove akce
 - pridani akce do kalendare portalu po prihlaseni
 - detail hrace, detail akce a detail turnaje
-- QR platbu a historii plateb v profilu
+- klubovy kredit s historii rucnich pripisu a bonusu
 - navrh hostovske rezervace bez plne registrace
 - oznameni k rezervacim a potvrzeni ucasti den predem
 - omluva z rezervace, hledani nahradnika a hlasovani sestavy
@@ -56,9 +83,9 @@ node -e "fetch('http://localhost:4213/api/health').then(r=>r.json()).then(consol
 - archiv turnaju s vysledky, fotkami a YouTube odkazy
 - detail slotu, kde rezervace hleda spoluhrace
 - prihlaseni pres telefon/e-mail jako modal
-- testovaci prepinac Hrac / Spravce nahore v aplikaci
+- lokalni testovaci prepinac roli; pri pripojeni k v2 API vidi kazdy jen svou prihlasenou roli
 - kredit hrace v horni liste a profilu
-- kreditni system s QR dobitim a navrhem strzeni po odehrani hry
+- kreditni system s rucnim pripisem spravcem a strzenim po odehrani hry
 - typy hracu: klubovy hrac, kreditovy hrac a host s pevnou cenou
 - individualni sleva hrace pres procenta a poznamku spravce
 - spravcovsky prehled provozu, rezervaci, plateb a ukolu
@@ -90,9 +117,9 @@ node -e "fetch('http://localhost:4213/api/health').then(r=>r.json()).then(consol
 - sprava akci, turnaju, startovneho, prihlasenych hracu a vysledku
 - zaklad PWA: manifest a service worker
 
-## Jak klub nastavit pozdeji
+## Nastaveni klubu
 
-V ostre verzi se konfigurace klubu muze nacitat z jednoho JSON souboru nebo z administrace:
+Konfigurace klubu se spravuje z administrace a uklada do kluboveho tenantu:
 
 - nazev klubu, logo, barvy
 - seznam kurtu
