@@ -13,6 +13,7 @@
     "v2:seed": "node scripts/seed-v2-local.mjs",
     "v2:migrate:production": "wrangler d1 migrations apply tenissiruch_portal --remote --config wrangler.production.jsonc",
     "v2:deploy:production": "wrangler deploy --config wrangler.production.jsonc",
+    "v2:deploy:direct": "node scripts/deploy-worker-content-direct.mjs",
     "v2:typegen": "wrangler types worker-v2/worker-configuration.d.ts --config wrangler.v2.jsonc --env-interface CloudflareBindings",
     "v2:typecheck": "tsc --project tsconfig.v2.json --noEmit",
     "v2:test": "vitest run --config vitest.v2.config.ts",

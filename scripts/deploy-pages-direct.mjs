@@ -33,6 +33,13 @@ function readTomlString(source, key) {
 }
 
 async function getAccessToken() {
+  if (process.env.CLOUDFLARE_API_TOKEN) {
+    return process.env.CLOUDFLARE_API_TOKEN;
+  }
+  if (process.env.CLOUDFLARE_API_TOKEN_FILE) {
+    return (await readFile(resolve(process.env.CLOUDFLARE_API_TOKEN_FILE), "utf8")).trim();
+  }
+
   let source = await readFile(oauthPath, "utf8");
   const storedToken = readTomlString(source, "oauth_token");
   const expiration = Date.parse(readTomlString(source, "expiration_time"));
