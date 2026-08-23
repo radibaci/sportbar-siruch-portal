@@ -33,6 +33,16 @@ test("keeps contextual help local and deterministic without an AI request", () =
   assert.match(helpBlock, /localStorage\.setItem\(HELP_PROGRESS_KEY/);
 });
 
+test("explains the complete player booking flow", () => {
+  const app = read("app.js");
+  assert.match(app, /Single potrebuje celkem 2 hrace, double celkem 4 hrace/);
+  assert.match(app, /Mam vlastni sestavu pouzij pro domluvene hosty mimo portal/);
+  assert.match(app, /Pozvat moje kamarady nabidne jen potvrzene pratele, kteri maji v terminu volno/);
+  assert.match(app, /Hledam spoluhrace pouzij az jako verejnou poptavku/);
+  assert.match(app, /musi sestava noveho zajemce potvrdit hlasovanim/);
+  assert.match(app, /muzes zmenit spoluhrace nebo rezervaci zrusit/);
+});
+
 test("keeps every stable walkthrough target connected to a rendered section", () => {
   const app = read("app.js");
   const helpBlock = app.slice(app.indexOf("const HELP_PROGRESS_KEY"), app.indexOf("const demoLoginAccounts"));

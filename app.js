@@ -68,11 +68,14 @@ const helpTopics = [
     roles: ["player"],
     views: ["booking"],
     title: "Vytvoreni rezervace",
-    summary: "Vyber data, kurtu, casu a spoluhrace pro single nebo double.",
+    summary: "Od volneho pulhodinoveho slotu az po hotovou sestavu pro single nebo double.",
     steps: [
-      { target: "[data-help-target='booking-date']", title: "Vyber datum", text: "Pouzij rychly tyden nebo den v mesicnim kalendari." },
-      { target: "[data-help-target='booking-courts']", title: "Vyber kurt a cas", text: "Volne pulhodiny jsou svetle zelene. Klepnutim otevres rezervaci." },
-      { target: "[data-help-target='player-reservations']", title: "Zkontroluj vysledek", text: "V Moje rezervace uvidis sestavu, potvrzeni i delku hry." }
+      { target: "[data-help-target='booking-date']", title: "1. Vyber den", text: "Pouzij rychly tyden nebo den v mesicnim kalendari. Rozvrh se vzdy prepne na zvolene datum." },
+      { target: "[data-help-target='booking-courts']", title: "2. Klepni na volny cas", text: "Svetle zeleny blok je volna pulhodina. Klepnutim otevres rezervaci vybraneho kurtu a zacatku hry." },
+      { target: "[data-help-target='booking-courts']", title: "3. Nastav hru", text: "Zkontroluj datum a kurt, vyber zacatek a delku. Single potrebuje celkem 2 hrace, double celkem 4 hrace." },
+      { target: "[data-help-target='booking-courts']", title: "4. Rekni, s kym jdes", text: "Mam vlastni sestavu pouzij pro domluvene hosty mimo portal. Pozvat moje kamarady nabidne jen potvrzene pratele, kteri maji v terminu volno. Hledam spoluhrace pouzij az jako verejnou poptavku v klubu." },
+      { target: "[data-help-target='booking-courts']", title: "5. Potvrzeni sestavy", text: "U vlastni sestavy potvrdis, ze jsou vsichni domluveni. Pozvany kamarad dostane oznameni a rezervace na nej ceka. U verejne poptavky musi sestava noveho zajemce potvrdit hlasovanim." },
+      { target: "[data-help-target='player-reservations']", title: "6. Zkontroluj a pripadne oprav", text: "V Moje rezervace uvidis termin, kurt, delku a stav kazdeho hrace. V povolene lhute muzes zmenit spoluhrace nebo rezervaci zrusit." }
     ]
   },
   {
