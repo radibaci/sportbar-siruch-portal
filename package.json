@@ -21,6 +21,7 @@
     "v2:check": "npm run test:ops && npm run v2:typegen && npm run v2:typecheck && npm run v2:test && wrangler deploy --dry-run --config wrangler.v2.jsonc",
     "v2:smoke": "node scripts/smoke-v2.mjs",
     "v2:smoke:roles": "node scripts/smoke-roles-v2.mjs",
+    "v2:smoke:lineups": "node scripts/smoke-reservation-lineups-v2.mjs",
     "db:backup": "node scripts/backup-d1.mjs",
     "db:restore": "node scripts/restore-d1.mjs",
     "club:provision": "node scripts/provision-club.mjs",

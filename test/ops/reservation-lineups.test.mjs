@@ -28,3 +28,8 @@ test("persists public join requests and requires lineup voting", () => {
   assert.match(coordination, /replacement_vote/);
   assert.match(app, /joinPlatformOpenGame/);
 });
+
+test("hides attendance reminders after their reservation has ended", () => {
+  assert.match(app, /\["reservation", "reservation_reminder"\]\.includes\(item\.entity_type\)/);
+  assert.match(app, /item\.reservationId && reservationHasEnded\(reservationById\(item\.reservationId\)\)/);
+});

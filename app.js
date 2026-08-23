@@ -1473,7 +1473,7 @@ async function refreshPlatformReservations(daysAhead = 14) {
     title: item.title,
     meta: item.body,
     status: item.type === "reservation_invite" ? "Ceka na potvrzeni" : "Nove",
-    reservationId: item.entity_type === "reservation" ? item.entity_id : undefined,
+    reservationId: ["reservation", "reservation_reminder"].includes(item.entity_type) ? item.entity_id : undefined,
     candidateMembershipId: item.type === "replacement_vote" ? item.actor_membership_id : undefined,
     eventId: item.entity_type === "event" ? item.entity_id : undefined,
     friendRequestId: item.entity_type === "friend_request" ? item.entity_id : undefined,

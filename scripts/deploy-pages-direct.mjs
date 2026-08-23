@@ -261,15 +261,30 @@ for (let attempt = 0; attempt < 30 && !["success", "failure"].includes(status); 
 if (status !== "success") throw new Error(`Pages deployment ended with status: ${status || "unknown"}.`);
 
 const publicUrl = `https://${PROJECT}.pages.dev`;
-const cacheBust = Date.now();
-const html = await fetch(`${publicUrl}/?published=${cacheBust}`, { cache: "no-store" }).then((response) => response.text());
-const script = await fetch(`${publicUrl}/app.js?published=${cacheBust}`, { cache: "no-store" }).then((response) => response.text());
-const healthResponse = await fetch(`${publicUrl}/api/v2/health?published=${cacheBust}`);
-if (!html.includes(`src="app.js"`)) throw new Error("Public HTML does not reference the stable app.js URL.");
-if (script !== appSource) throw new Error("Public app.js does not match the deployed application source.");
-if (!healthResponse.ok) throw new Error(`Public API proxy health check failed (${healthResponse.status}).`);
+async function verifyRelease(baseUrl, attempts = 1) {
+  let lastReason = "unknown verification error";
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const cacheBust = Date.now();
+    const [htmlResponse, scriptResponse, healthResponse] = await Promise.all([
+      fetch(`${baseUrl}/?published=${cacheBust}`, { cache: "no-store" }),
+      fetch(`${baseUrl}/app.js?published=${cacheBust}`, { cache: "no-store" }),
+      fetch(`${baseUrl}/api/v2/health?published=${cacheBust}`, { cache: "no-store" }),
+    ]);
+    const html = await htmlResponse.text();
+    const script = await scriptResponse.text();
+    if (!html.includes(`src="app.js"`)) lastReason = "Public HTML does not reference the stable app.js URL";
+    else if (script !== appSource) lastReason = "app.js has not propagated yet";
+    else if (!healthResponse.ok) lastReason = `API proxy health check returned ${healthResponse.status}`;
+    else return healthResponse.status;
+    if (attempt + 1 < attempts) await new Promise((resolvePromise) => setTimeout(resolvePromise, 2_000));
+  }
+  throw new Error(`${baseUrl}: ${lastReason}.`);
+}
+
+await verifyRelease(String(current.url).replace(/\/$/, ""));
+const healthStatus = await verifyRelease(publicUrl, 20);
 
 console.log(`Published ${PROJECT} successfully.`);
 console.log(`URL: ${publicUrl}/`);
 console.log(`Deployment: ${current.url}`);
-console.log(`Assets: ${assets.length}; API health: ${healthResponse.status}`);
+console.log(`Assets: ${assets.length}; API health: ${healthStatus}`);
