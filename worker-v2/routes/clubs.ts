@@ -76,7 +76,7 @@ protectedClubRoutes.get("/:clubId/context", async (c) => {
   const clubId = c.req.param("clubId");
   const membership = await requireClubMembership(c.env.DB, auth.userId, clubId);
   const club = await c.env.DB.prepare(`
-    SELECT id, slug, name, logo_url, primary_color, accent_color
+    SELECT id, slug, name, logo_url, primary_color, accent_color, public_config_json
     FROM clubs
     WHERE id = ? AND status = 'active'
   `).bind(clubId).first<{
@@ -86,6 +86,7 @@ protectedClubRoutes.get("/:clubId/context", async (c) => {
     logo_url: string | null;
     primary_color: string;
     accent_color: string;
+    public_config_json: string;
   }>();
   if (!club) throw new AppError(404, "club_not_found", "The club does not exist.");
 
@@ -98,6 +99,7 @@ protectedClubRoutes.get("/:clubId/context", async (c) => {
       logoUrl: club.logo_url,
       primaryColor: club.primary_color,
       accentColor: club.accent_color,
+      publicConfig: JSON.parse(club.public_config_json),
     },
     membership: { id: membership.membershipId, role: membership.role },
     modules: await clubModuleStates(c.env.DB, clubId),
@@ -191,7 +193,14 @@ protectedClubRoutes.put("/:clubId", async (c) => {
   const current = await c.env.DB.prepare(`SELECT public_config_json FROM clubs WHERE id = ? AND status = 'active'`).bind(clubId).first<{ public_config_json: string }>();
   if (!current) throw new AppError(404, "club_not_found", "The club does not exist.");
   const config = JSON.parse(current.public_config_json) as Record<string, unknown>;
+  const cancellationMinutes = body.cancellationMinutes === undefined
+    ? Number(config.reservationCancellationMinutes ?? 30)
+    : Number(body.cancellationMinutes);
+  if (!Number.isInteger(cancellationMinutes) || cancellationMinutes < 0 || cancellationMinutes > 10_080) {
+    throw new AppError(400, "invalid_cancellation_window", "Cancellation time must be a whole number from 0 to 10080 minutes.");
+  }
   config.openingHours = `${openTime}-${closeTime}`;
+  config.reservationCancellationMinutes = cancellationMinutes;
   const now = new Date().toISOString();
   await c.env.DB.batch([
     c.env.DB.prepare(`UPDATE clubs SET name = ?, logo_url = ?, public_config_json = ?, updated_at = ? WHERE id = ?`)
@@ -201,9 +210,9 @@ protectedClubRoutes.put("/:clubId", async (c) => {
     c.env.DB.prepare(`
       INSERT INTO audit_events (id, club_id, actor_user_id, action, entity_type, entity_id, metadata_json, created_at)
       VALUES (?, ?, ?, 'club.settings.updated', 'club', ?, ?, ?)
-    `).bind(crypto.randomUUID(), clubId, auth.userId, clubId, JSON.stringify({ name, openTime, closeTime }), now),
+    `).bind(crypto.randomUUID(), clubId, auth.userId, clubId, JSON.stringify({ name, openTime, closeTime, cancellationMinutes }), now),
   ]);
-  return c.json({ ok: true, club: { id: clubId, name, logoUrl: logoUrl || null, openTime, closeTime } });
+  return c.json({ ok: true, club: { id: clubId, name, logoUrl: logoUrl || null, openTime, closeTime, cancellationMinutes } });
 });
 
 protectedClubRoutes.post("/:clubId/members", async (c) => {

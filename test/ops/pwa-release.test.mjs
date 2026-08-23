@@ -4,19 +4,21 @@ import test from "node:test";
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
 
-test("keeps the frontend, manifest and service-worker cache on one immutable version", () => {
+test("publishes a stable PWA URL and refreshes release files without query versions", () => {
   const app = read("app.js");
   const index = read("index.html");
   const manifest = read("manifest.webmanifest");
   const worker = read("sw.js");
-  const version = app.match(/const DEMO_VERSION = (\d+);/)?.[1];
-  assert.ok(version, "app version is missing");
-  assert.match(index, new RegExp(`app\\.js\\?v=${version}`));
-  assert.match(index, new RegExp(`styles\\.css\\?v=${version}`));
-  assert.match(index, new RegExp(`manifest\\.webmanifest\\?v=${version}`));
-  assert.match(manifest, new RegExp(`v=${version}`));
-  assert.match(worker, new RegExp(`tennis-club-portal-v${version}`));
-  assert.match(worker, new RegExp(`app\\.js\\?v=${version}`));
+  const headers = read("_headers");
+  assert.match(index, /src="app\.js"/);
+  assert.match(index, /href="styles\.css"/);
+  assert.match(index, /href="manifest\.webmanifest"/);
+  assert.match(manifest, /"start_url": "\.\/"/);
+  assert.doesNotMatch(`${app}\n${index}\n${manifest}\n${worker}`, /\?v=\d+/);
+  assert.match(worker, /self\.skipWaiting\(\)/);
+  assert.match(worker, /clients\.claim\(\)/);
+  assert.match(worker, /freshFirst/);
+  assert.match(headers, /\/app\.js[\s\S]*?Cache-Control: no-cache, no-store/);
 });
 
 test("refreshes live platform data after resume and keeps an offline navigation shell", () => {

@@ -24,8 +24,6 @@ const ACCOUNT = pagesConfig.account_id;
 const API_ROOT = "https://api.cloudflare.com/client/v4";
 const CLIENT_ID = "54d11594-84e4-41aa-b438-e81b8fa78ee7";
 const appSource = await readFile(join(root, "app.js"), "utf8");
-const releaseVersion = appSource.match(/const DEMO_VERSION = (\d+);/)?.[1];
-if (!releaseVersion) throw new Error("Application release version is missing.");
 
 function readTomlString(source, key) {
   const match = source.match(new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, "m"));
@@ -235,7 +233,7 @@ const deploymentForm = new FormData();
 deploymentForm.append("manifest", JSON.stringify(manifest));
 deploymentForm.append("branch", "main");
 deploymentForm.append("commit_dirty", "true");
-deploymentForm.append("commit_message", `Publish portal v${releaseVersion}`);
+deploymentForm.append("commit_message", "Publish portal");
 
 const headersPath = join(dist, "_headers");
 if ((await stat(headersPath).catch(() => null))?.isFile()) {
@@ -264,14 +262,14 @@ if (status !== "success") throw new Error(`Pages deployment ended with status: $
 
 const publicUrl = `https://${PROJECT}.pages.dev`;
 const cacheBust = Date.now();
-const html = await fetch(`${publicUrl}/?v=${releaseVersion}&published=${cacheBust}`).then((response) => response.text());
-const script = await fetch(`${publicUrl}/app.js?v=${releaseVersion}&published=${cacheBust}`).then((response) => response.text());
+const html = await fetch(`${publicUrl}/?published=${cacheBust}`, { cache: "no-store" }).then((response) => response.text());
+const script = await fetch(`${publicUrl}/app.js?published=${cacheBust}`, { cache: "no-store" }).then((response) => response.text());
 const healthResponse = await fetch(`${publicUrl}/api/v2/health?published=${cacheBust}`);
-if (!html.includes(`app.js?v=${releaseVersion}`)) throw new Error(`Public HTML does not reference app.js v${releaseVersion}.`);
-if (!script.includes(`DEMO_VERSION = ${releaseVersion}`)) throw new Error(`Public app.js is not v${releaseVersion}.`);
+if (!html.includes(`src="app.js"`)) throw new Error("Public HTML does not reference the stable app.js URL.");
+if (script !== appSource) throw new Error("Public app.js does not match the deployed application source.");
 if (!healthResponse.ok) throw new Error(`Public API proxy health check failed (${healthResponse.status}).`);
 
-console.log(`Published ${PROJECT} v${releaseVersion} successfully.`);
-console.log(`URL: ${publicUrl}/?v=${releaseVersion}`);
+console.log(`Published ${PROJECT} successfully.`);
+console.log(`URL: ${publicUrl}/`);
 console.log(`Deployment: ${current.url}`);
 console.log(`Assets: ${assets.length}; API health: ${healthResponse.status}`);

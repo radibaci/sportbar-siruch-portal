@@ -24,9 +24,10 @@ test("blocks accidental production restore and verifies backup integrity", () =>
   assert.match(restore, /D1_RESTORE_DATABASE_ID/);
 });
 
-test("derives the direct Pages deployment version from the application", () => {
+test("verifies the stable Pages deployment against the exact application source", () => {
   const deploy = read("scripts/deploy-pages-direct.mjs");
-  assert.match(deploy, /const releaseVersion = appSource\.match/);
-  assert.match(deploy, /Public HTML does not reference app\.js v\$\{releaseVersion\}/);
-  assert.doesNotMatch(deploy, /Publish portal v123/);
+  assert.match(deploy, /script !== appSource/);
+  assert.match(deploy, /Public HTML does not reference the stable app\.js URL/);
+  assert.match(deploy, /URL: \$\{publicUrl\}\//);
+  assert.doesNotMatch(deploy, /releaseVersion|\?v=/);
 });

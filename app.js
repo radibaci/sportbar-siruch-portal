@@ -1,12 +1,13 @@
 const club = {
   name: "Sportbar Siruch",
   logoText: "DM",
-  logoUrl: "assets/club-logo-dm-192.png?v=124",
+  logoUrl: "assets/club-logo-dm-192.png",
   open: "8:00",
   close: "21:00",
   slotMinutes: 30,
   currency: "Kc",
-  defaultDurations: [30, 60, 90, 120, 150, 180]
+  defaultDurations: [30, 60, 90, 120, 150, 180],
+  cancellationMinutes: 30
 };
 
 const currentUser = {
@@ -1023,7 +1024,7 @@ const modalClose = document.querySelector("#modalClose");
 const toast = document.querySelector("#toast");
 const helpCoachmark = document.querySelector("#helpCoachmark");
 const STORAGE_KEY = "tennis-club-portal-state-v1";
-const DEMO_VERSION = 124;
+const DATA_SCHEMA_VERSION = 124;
 const DEFAULT_PUBLIC_API = "https://sportbar-siruch-api.bacik.workers.dev";
 const API_STORAGE_KEY = "tennis-club-api-base";
 const urlApiBase = new URLSearchParams(window.location.search).get("api") || "";
@@ -1155,8 +1156,7 @@ function adminHeaderLabel() {
 }
 
 function versionedAssetUrl(url = "") {
-  if (!/^assets\//i.test(url)) return url;
-  return `${url.split("?", 1)[0]}?v=${DEMO_VERSION}`;
+  return url;
 }
 
 function applyPlatformWallet(wallet, playerId = currentPersonaId()) {
@@ -1354,11 +1354,16 @@ async function refreshPlatformReservations(daysAhead = 14) {
       title: item.title || "",
       ownerMembershipId: item.ownerMembershipId,
       participantStatus: item.participantStatus,
+      createdAt: item.createdAt,
+      canEditParticipants: item.canEditParticipants,
+      canCancel: item.canCancel,
+      canCancelUntil: item.canCancelUntil,
       court,
       players: attendance.map((player) => player.name),
       attendance
     };
   });
+  if (Number.isInteger(Number(mine.cancellationMinutes))) club.cancellationMinutes = Number(mine.cancellationMinutes);
   replaceArray(personalReservations, mappedMine.filter((item) => !(item.title === "Navrh hry" && item.status === "pending")));
   replaceArray(gameProposals, (mine.reservations || []).filter((item) => item.title === "Navrh hry" && item.status === "pending").map((item) => {
     const date = dateFromIso(item.date) || appToday;
@@ -1836,6 +1841,8 @@ async function loadPlatformContext() {
   platformNotificationPreferences = notificationPreferencePayload.preferences || {};
   platformConnections = connectionPayload;
   platformModules = clubContextPayload.modules || [];
+  const configuredCancellation = Number(clubContextPayload.club?.publicConfig?.reservationCancellationMinutes);
+  if (Number.isInteger(configuredCancellation) && configuredCancellation >= 0) club.cancellationMinutes = configuredCancellation;
   await refreshPlatformReservations();
   saveLoginSession({ email: me.user.email, role: state.role, persona: state.persona });
   applyClubBranding();
@@ -2011,7 +2018,7 @@ async function handleImageUpload(input) {
 
 function portalStatePayload() {
   return {
-    version: DEMO_VERSION,
+    version: DATA_SCHEMA_VERSION,
     clientUpdatedAt: stateRevisionAt,
     club,
     courts,
@@ -2150,7 +2157,7 @@ function migrateDateFields() {
 }
 
 function applyStoredState(saved) {
-  if (!saved || saved.version !== DEMO_VERSION) return false;
+  if (!saved || saved.version !== DATA_SCHEMA_VERSION) return false;
   suppressRemotePersist = true;
   if (typeof saved.clientUpdatedAt === "string") stateRevisionAt = saved.clientUpdatedAt;
   if (saved.club) Object.assign(club, saved.club);
@@ -2243,7 +2250,7 @@ async function hydrateStoredData() {
   let localSaved = null;
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-    if (parsed?.version === DEMO_VERSION) localSaved = parsed;
+    if (parsed?.version === DATA_SCHEMA_VERSION) localSaved = parsed;
   } catch (_) {}
   try {
     const response = await fetch(apiUrl("/api/state"), { cache: "no-store" });
@@ -2270,7 +2277,7 @@ async function hydrateStoredData() {
   try {
     const saved = localSaved || JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
     if (!saved) return sharedApiOnline ? "seed" : "default";
-    if (saved.version !== DEMO_VERSION) {
+    if (saved.version !== DATA_SCHEMA_VERSION) {
       localStorage.removeItem(STORAGE_KEY);
       return sharedApiOnline ? "seed" : "default";
     }
@@ -3166,8 +3173,8 @@ async function sendAndroidNotificationTest() {
     const count = Math.max(1, appBadgeCount() || visibleNotifications().length || 4);
     await registration.showNotification(`${club.name}: ${count} zpravy`, {
       body: "Test klubove notifikace. Android z ni muze vytvorit tecku nebo cislo na ikone podle launcheru.",
-      icon: "assets/club-logo-dm-192.png?v=124",
-      badge: "assets/club-logo-dm-192.png?v=124",
+      icon: "assets/club-logo-dm-192.png",
+      badge: "assets/club-logo-dm-192.png",
       tag: `siruch-test-${Date.now()}`,
       renotify: false,
       data: { url: "./index.html" }
@@ -3296,15 +3303,20 @@ async function saveAdminSettings() {
   const logoUrl = document.querySelector("#clubLogoUrlInput")?.value?.trim();
   const open = document.querySelector("#clubOpenSettingsInput")?.value?.trim();
   const close = document.querySelector("#clubCloseSettingsInput")?.value?.trim();
+  const cancellationMinutes = Number(document.querySelector("#clubCancellationMinutesInput")?.value);
   if (!name || !open || !close || timeToMinutes(close) <= timeToMinutes(open)) {
     lastActionMessage = "Zadej nazev klubu a platnou oteviraci dobu.";
+    return false;
+  }
+  if (!Number.isInteger(cancellationMinutes) || cancellationMinutes < 0 || cancellationMinutes > 10080) {
+    lastActionMessage = "Cas na opravu rezervace musi byt cele cislo od 0 do 10080 minut.";
     return false;
   }
   if (platformContext.enabled) {
     try {
       await platformRequest(`/api/v2/clubs/${platformContext.clubId}`, {
         method: "PUT",
-        body: JSON.stringify({ name, logoUrl: logoUrl || "", openTime: open, closeTime: close })
+        body: JSON.stringify({ name, logoUrl: logoUrl || "", openTime: open, closeTime: close, cancellationMinutes })
       });
       await refreshPlatformReservations();
       lastActionMessage = "Nastaveni klubu je ulozene a platne pro vsechny kurty.";
@@ -3316,6 +3328,7 @@ async function saveAdminSettings() {
   club.name = name;
   club.logoText = logoText || club.logoText || "";
   club.logoUrl = logoUrl || "";
+  club.cancellationMinutes = cancellationMinutes;
   if (open && close && timeToMinutes(close) > timeToMinutes(open)) {
     club.open = open;
     club.close = close;
@@ -4141,8 +4154,14 @@ async function createBookingReservation() {
   }
   const target = gameType === "single" ? 2 : 4;
   const bookingType = partnerId && partnerMode === "invite" ? "pending" : attendance.filter(activeForGame).length >= target ? "mine" : "group";
+  const createdAt = new Date().toISOString();
   const reservation = {
     id: reservationId,
+    ownerId: currentPersonaId(),
+    createdAt,
+    canEditParticipants: true,
+    canCancel: Number(club.cancellationMinutes) > 0,
+    canCancelUntil: new Date(new Date(createdAt).getTime() + Number(club.cancellationMinutes) * 60000).toISOString(),
     isoDate,
     day,
     date,
@@ -7030,6 +7049,89 @@ function reservationMotivation(reservation, index) {
   return motivationLines[(reservation.start.length + reservation.kind.length + index) % motivationLines.length];
 }
 
+function ownsReservation(reservation) {
+  if (platformContext.enabled) return reservation?.canEditParticipants === true;
+  if (reservation?.ownerId) return reservation.ownerId === currentPersonaId();
+  return normalizedAttendance(reservation)[0]?.playerId === currentPersonaId();
+}
+
+function reservationCanBeCancelled(reservation) {
+  if (!ownsReservation(reservation)) return false;
+  if (reservation?.canCancelUntil) return reservation.canCancel === true && Date.now() <= new Date(reservation.canCancelUntil).getTime();
+  if (!reservation?.createdAt || Number(club.cancellationMinutes) <= 0) return false;
+  return Date.now() <= new Date(reservation.createdAt).getTime() + Number(club.cancellationMinutes) * 60000;
+}
+
+function reservationCancellationLabel(reservation) {
+  if (!reservation?.canCancelUntil && !reservation?.createdAt) return "";
+  const deadline = new Date(reservation.canCancelUntil || new Date(reservation.createdAt).getTime() + Number(club.cancellationMinutes) * 60000);
+  return Number.isNaN(deadline.getTime()) ? "" : `Rezervaci lze zrusit do ${deadline.toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" })}.`;
+}
+
+async function updateReservationParticipants(reservationIndex) {
+  const reservation = personalReservations[reservationIndex];
+  if (!reservation || !ownsReservation(reservation)) {
+    lastActionMessage = "Sestavu muze menit jen vlastnik rezervace.";
+    return false;
+  }
+  const selected = [...document.querySelectorAll('input[name="reservationParticipant"]:checked')].map((input) => input.value);
+  const limit = reservationTargetPlayers(reservation) - 1;
+  if (selected.length > limit) {
+    lastActionMessage = `${reservationGameLabel(reservation)} dovoluje vybrat nejvyse ${limit} spoluhrace.`;
+    return false;
+  }
+  const participantMode = document.querySelector("#reservationParticipantMode")?.value === "confirmed" ? "confirmed" : "pending";
+  if (platformContext.enabled) {
+    const participantMembershipIds = selected.map((id) => platformContext.membersByPersona.get(id)).filter(Boolean);
+    if (participantMembershipIds.length !== selected.length) {
+      lastActionMessage = "Nektery vybrany hrac uz neni aktivnim clenem klubu.";
+      return false;
+    }
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${reservation.id}/participants`, {
+        method: "PATCH",
+        body: JSON.stringify({ participantMembershipIds, participantMode })
+      });
+      await refreshPlatformReservations();
+    } catch (error) {
+      lastActionMessage = error.code === "booking_conflict" ? "Nektery hrac uz v tomto case hraje." : error.message;
+      return false;
+    }
+  } else {
+    const owner = normalizedAttendance(reservation)[0];
+    reservation.attendance = [owner, ...selected.map((id) => attendanceFromPlayerId(id, participantMode, participantMode === "confirmed" ? "ucast potvrzena" : "ceka na potvrzeni"))];
+    reservation.players = reservation.attendance.map((player) => player.name);
+    persistData();
+  }
+  lastActionMessage = "Sestava rezervace je upravena a zmeny dostali dotceni hraci.";
+  return true;
+}
+
+async function cancelOwnedReservation(reservationIndex) {
+  const reservation = personalReservations[reservationIndex];
+  if (!reservation || !reservationCanBeCancelled(reservation)) {
+    lastActionMessage = "Cas pro uplne zruseni rezervace uz vyprsel.";
+    return false;
+  }
+  if (platformContext.enabled) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${reservation.id}`, { method: "DELETE" });
+      await refreshPlatformReservations();
+    } catch (error) {
+      lastActionMessage = error.code === "cancellation_window_expired" ? "Cas pro uplne zruseni rezervace uz vyprsel." : error.message;
+      return false;
+    }
+  } else {
+    courts.forEach((court) => { court.reservations = court.reservations.filter((item) => item.reservationId !== reservation.id); });
+    personalReservations.splice(reservationIndex, 1);
+    adminReservations.splice(0, adminReservations.length, ...adminReservations.filter((item) => item.reservationId !== reservation.id));
+    notifications.splice(0, notifications.length, ...notifications.filter((item) => item.reservationId !== reservation.id));
+    persistData();
+  }
+  lastActionMessage = "Rezervace byla zrusena a kurt je znovu volny.";
+  return true;
+}
+
 function reservationCard(reservation) {
   const index = Math.max(0, personalReservations.indexOf(reservation));
   const minutes = timeToMinutes(reservation.end) - timeToMinutes(reservation.start);
@@ -7072,6 +7174,8 @@ function reservationCard(reservation) {
       ${orders.length ? `<div class="reservation-block reservation-orders"><small>Nachystat k rezervaci</small>${orders.map((order) => `<span>${order.product} · ${order.status}</span>`).join("")}</div>` : ""}
       <div class="reservation-actions">
         <button class="secondary-button" data-action="reservation-detail" data-reservation="${index}">Detail</button>
+        ${ownsReservation(reservation) ? `<button class="secondary-button" data-action="reservation-edit" data-reservation="${index}">Upravit sestavu</button>` : ""}
+        ${reservationCanBeCancelled(reservation) ? `<button class="danger-button" data-action="reservation-cancel" data-reservation="${index}">Zrusit rezervaci</button>` : ""}
         <button class="${myDeclineCanBeUndone ? "secondary-button" : "primary-button"}" data-action="cancel" data-reservation="${index}">${myDeclineCanBeUndone ? "Vzít omluvenku zpět" : "Omluvit se"}</button>
       </div>
     </article>
@@ -8665,6 +8769,8 @@ function openModal(kind, data = {}) {
     "publish-search": publishSearchModal,
     "join-slot": joinSlotModal,
     "reservation-detail": reservationDetailModal,
+    "reservation-edit": reservationEditModal,
+    "reservation-cancel": reservationCancelModal,
     "event-detail": eventDetailModal,
     "tournament-detail": tournamentDetailModal,
     "court-detail": courtDetailModal,
@@ -8938,6 +9044,7 @@ function joinSlotModal(data) {
 
 function reservationDetailModal(data) {
   const reservation = personalReservations[Number(data.reservation || 0)] || personalReservations[0];
+  const reservationIndex = Math.max(0, personalReservations.indexOf(reservation));
   const attendance = normalizedAttendance(reservation);
   const orders = reservationOrders(reservation);
   return `
@@ -8977,8 +9084,28 @@ function reservationDetailModal(data) {
       <div class="service-card">
         <div class="row-top"><span><b>Systemove doporuceni</b><small>Pokud nekdo odrekne, nejdriv pozvat zname z historie hry, potom podobnou uroven a az pak verejne hledani.</small></span></div>
       </div>
+      ${ownsReservation(reservation) ? `<div class="service-card"><div class="row-top"><span><b>Oprava rezervace</b><small>${reservationCancellationLabel(reservation) || `Sestavu muzes upravit i pozdeji. Cele zruseni povoluje klub ${club.cancellationMinutes} minut od objednani.`}</small></span></div><div class="inline-actions"><button class="secondary-button" data-action="reservation-edit" data-reservation="${reservationIndex}">Zmenit spoluhrace</button>${reservationCanBeCancelled(reservation) ? `<button class="danger-button" data-action="reservation-cancel" data-reservation="${reservationIndex}">Zrusit celou rezervaci</button>` : ""}</div></div>` : ""}
     </div>
   `;
+}
+
+function reservationEditModal(data) {
+  const reservationIndex = Number(data.reservation || 0);
+  const reservation = personalReservations[reservationIndex] || personalReservations[0];
+  if (!reservation || !ownsReservation(reservation)) return busyModal();
+  const selected = new Set(normalizedAttendance(reservation)
+    .filter((player) => player.playerId !== currentPersonaId() && !["declined", "candidate"].includes(player.status))
+    .map((player) => player.playerId));
+  const limit = reservationTargetPlayers(reservation) - 1;
+  const choices = players.filter((player) => player.id !== currentPersonaId() && (player.clubRole || "player") === "player" && (!platformContext.enabled || platformContext.membersByPersona.get(player.id)));
+  return `<div class="modal-body"><div><p class="eyebrow">Oprava rezervace</p><h2 id="modalTitle">Zmenit spoluhrace</h2><p class="muted">${reservationDateLabel(reservation)} · ${reservation.start}-${reservation.end} · ${reservationGameLabel(reservation)}. Vyber nejvyse ${limit} hrace.</p></div><div class="player-choice-grid">${choices.map((player) => `<label class="profile-row"><span><span class="avatar tiny-avatar ${player.gender === "female" ? "gender-female" : "gender-male"}">${player.initials}</span> ${player.name}</span><input type="checkbox" name="reservationParticipant" value="${player.id}" ${selected.has(player.id) ? "checked" : ""}></label>`).join("")}</div><div class="field"><label>Stav vybranych hracu</label><select id="reservationParticipantMode"><option value="pending">Poslat pozvanku a cekat na potvrzeni</option><option value="confirmed">Uz jsme domluveni, rovnou potvrdit</option></select></div><button class="primary-button" data-confirm="reservation-participants-save" data-reservation="${reservationIndex}">Ulozit sestavu</button></div>`;
+}
+
+function reservationCancelModal(data) {
+  const reservationIndex = Number(data.reservation || 0);
+  const reservation = personalReservations[reservationIndex] || personalReservations[0];
+  if (!reservation || !reservationCanBeCancelled(reservation)) return `<div class="modal-body"><h2 id="modalTitle">Rezervaci uz nelze zrusit</h2><p class="muted">Casove okno nastavene klubem uz vyprselo. Muzeš se omluvit ze sve ucasti nebo kontaktovat spravce.</p></div>`;
+  return `<div class="modal-body"><div><p class="eyebrow">Zruseni rezervace</p><h2 id="modalTitle">Uvolnit cely kurt?</h2><p class="muted">${reservationDateLabel(reservation)} · ${reservation.start}-${reservation.end} · ${reservation.court.name}. Vsem spoluhracum prijde zprava a termin se okamzite uvolni.</p></div><div class="service-card"><b>${reservationCancellationLabel(reservation)}</b></div><button class="danger-button" data-confirm="reservation-cancel" data-reservation="${reservationIndex}">Ano, zrusit celou rezervaci</button></div>`;
 }
 
 function eventDetailModal(data) {
@@ -9832,9 +9959,10 @@ function adminSettingsModal() {
       <div class="form-grid">
         <div class="field"><label>Nazev klubu</label><input id="clubNameInput" value="${club.name}"></div>
         <div class="field"><label>Logo - text/inicialy</label><input id="clubLogoTextInput" value="${club.logoText || ""}" placeholder="SS"></div>
-        <div class="field upload-field"><label>Logo klubu</label><img id="clubLogoPreview" class="upload-preview logo-preview" src="${club.logoUrl || "assets/club-logo-dm-192.png?v=124"}" alt="Logo klubu"><input id="clubLogoUrlInput" type="hidden" value="${club.logoUrl || ""}"><label class="secondary-button file-upload-button">Vybrat logo<input type="file" accept="image/*" data-image-upload data-image-kind="club-logo" data-target-id="club" data-preview="clubLogoPreview" data-url-input="clubLogoUrlInput"></label></div>
+        <div class="field upload-field"><label>Logo klubu</label><img id="clubLogoPreview" class="upload-preview logo-preview" src="${club.logoUrl || "assets/club-logo-dm-192.png"}" alt="Logo klubu"><input id="clubLogoUrlInput" type="hidden" value="${club.logoUrl || ""}"><label class="secondary-button file-upload-button">Vybrat logo<input type="file" accept="image/*" data-image-upload data-image-kind="club-logo" data-target-id="club" data-preview="clubLogoPreview" data-url-input="clubLogoUrlInput"></label></div>
         <div class="field"><label>Otevreno od</label><input id="clubOpenSettingsInput" value="${club.open}"></div>
         <div class="field"><label>Zavreno</label><input id="clubCloseSettingsInput" value="${club.close}"></div>
+        <div class="field"><label>Zruseni nove rezervace do</label><input id="clubCancellationMinutesInput" type="number" min="0" max="10080" step="5" value="${club.cancellationMinutes ?? 30}"><small>Minuty od vytvoreni. Hodnota 0 zruseni hracem vypne.</small></div>
         <div class="field"><label>Potvrzeni ucasti</label><select><option>Den pred terminem</option><option>Vypnuto</option><option>Jen trvale rezervace</option></select></div>
         <div class="field"><label>Hoste</label><select><option>Povolit s jednorazovym kodem</option><option>Jen po schvaleni spravcem</option><option>Vypnuto</option></select></div>
       </div>
@@ -10648,6 +10776,14 @@ document.addEventListener("click", async (event) => {
       showToast(lastActionMessage || "Rezervaci se nepodarilo vytvorit.");
       return;
     }
+    if (kind === "reservation-participants-save" && !await updateReservationParticipants(Number(confirm.dataset.reservation || 0))) {
+      showToast(lastActionMessage || "Sestavu se nepodarilo upravit.");
+      return;
+    }
+    if (kind === "reservation-cancel" && !await cancelOwnedReservation(Number(confirm.dataset.reservation || 0))) {
+      showToast(lastActionMessage || "Rezervaci se nepodarilo zrusit.");
+      return;
+    }
     if (kind === "admin-booking-create" && !await createAdminBooking(false)) {
       showToast(lastActionMessage || "Rucni rezervaci se nepodarilo vytvorit.");
       return;
@@ -10868,6 +11004,8 @@ document.addEventListener("click", async (event) => {
     render();
     const messages = {
       book: "Rezervace byla ulozena a propsana ostatnim hracum.",
+      "reservation-participants-save": "Sestava rezervace je upravena.",
+      "reservation-cancel": "Rezervace je zrusena a kurt je znovu volny.",
       cancel: "Ucast byla zrusena. Ostatnim hracum se spustilo hledani nahradnika.",
       "undo-cancel": "Omluvenka je zrusena a nahradnici k terminu jsou uklizeni.",
       "find-player": "Poptavka na spoluhrace je zverejnena.",

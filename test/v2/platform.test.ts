@@ -383,6 +383,67 @@ describe("platform v2 isolation", () => {
       .toMatchObject([{ participantStatus: "confirmed", status: "confirmed" }]);
   });
 
+  it("lets the owner correct teammates without duplicate participants", async () => {
+    const radim = await login("radim@siruch.test");
+    const created = await api("/api/v2/clubs/club-siruch/reservations", radim.cookie, {
+      method: "POST",
+      body: JSON.stringify({
+        courtId: "court-1", date: "2026-08-16", start: "15:00", end: "16:30", gameType: "single",
+        participantMembershipIds: ["m-viki"], participantMode: "pending",
+      }),
+    });
+    const reservationId = (await created.json<{ reservation: { id: string } }>()).reservation.id;
+    const bob = await login("bob@siruch.test");
+    expect((await api(`/api/v2/clubs/club-siruch/reservations/${reservationId}/participants`, bob.cookie, {
+      method: "PATCH", body: JSON.stringify({ participantMembershipIds: ["m-bob"], participantMode: "confirmed" }),
+    })).status).toBe(403);
+
+    const updated = await api(`/api/v2/clubs/club-siruch/reservations/${reservationId}/participants`, radim.cookie, {
+      method: "PATCH", body: JSON.stringify({ participantMembershipIds: ["m-bob"], participantMode: "confirmed" }),
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({ status: "confirmed" });
+    const participants = await env.DB.prepare(`SELECT membership_id, status FROM reservation_participants WHERE reservation_id = ? ORDER BY membership_id`)
+      .bind(reservationId).all<{ membership_id: string; status: string }>();
+    expect(participants.results).toEqual([
+      { membership_id: "m-bob", status: "confirmed" },
+      { membership_id: "m-radim", status: "owner" },
+    ]);
+    const vikiLocks = await env.DB.prepare(`SELECT COUNT(*) AS count FROM member_busy_slots WHERE reservation_id = ? AND membership_id = 'm-viki'`)
+      .bind(reservationId).first<{ count: number }>();
+    expect(Number(vikiLocks?.count)).toBe(0);
+  });
+
+  it("cancels a new booking only inside the club-configured correction window", async () => {
+    const radim = await login("radim@siruch.test");
+    const createReservation = async (start: string, end: string) => {
+      const response = await api("/api/v2/clubs/club-siruch/reservations", radim.cookie, {
+        method: "POST",
+        body: JSON.stringify({ courtId: "court-1", date: "2026-08-17", start, end, gameType: "single", participantMembershipIds: ["m-viki"], participantMode: "confirmed" }),
+      });
+      return (await response.json<{ reservation: { id: string } }>()).reservation.id;
+    };
+    const firstId = await createReservation("10:00", "11:00");
+    const mine = await api("/api/v2/clubs/club-siruch/me/reservations", radim.cookie);
+    expect(await mine.json()).toMatchObject({ cancellationMinutes: 30, reservations: [expect.objectContaining({ id: firstId, canCancel: true })] });
+    expect((await api(`/api/v2/clubs/club-siruch/reservations/${firstId}`, radim.cookie, { method: "DELETE" })).status).toBe(200);
+    expect(Number((await env.DB.prepare(`SELECT COUNT(*) AS count FROM reservation_slots WHERE reservation_id = ?`).bind(firstId).first<{ count: number }>())?.count)).toBe(0);
+
+    const secondId = await createReservation("12:00", "13:00");
+    await env.DB.prepare(`UPDATE reservations SET created_at = datetime('now', '-31 minutes') WHERE id = ?`).bind(secondId).run();
+    const expired = await api(`/api/v2/clubs/club-siruch/reservations/${secondId}`, radim.cookie, { method: "DELETE" });
+    expect(expired.status).toBe(409);
+
+    const admin = await login("spravce@siruch.test");
+    const settings = await api("/api/v2/clubs/club-siruch", admin.cookie, {
+      method: "PUT",
+      body: JSON.stringify({ name: "Sportbar Siruch", logoUrl: "", openTime: "08:00", closeTime: "21:00", cancellationMinutes: 60 }),
+    });
+    expect(settings.status).toBe(200);
+    expect(await settings.json()).toMatchObject({ club: { cancellationMinutes: 60 } });
+    expect((await api(`/api/v2/clubs/club-siruch/reservations/${secondId}`, radim.cookie, { method: "DELETE" })).status).toBe(200);
+  });
+
   it("invites an eligible replacement and selects the accepted candidate by active-player vote", async () => {
     const radim = await login("radim@siruch.test");
     const created = await api("/api/v2/clubs/club-siruch/reservations", radim.cookie, {

@@ -33,6 +33,7 @@ type ReservationRow = {
   owner_display_name?: string;
   title?: string | null;
   series_id?: string | null;
+  created_at: string;
 };
 
 type ParticipantRow = {
@@ -148,6 +149,28 @@ async function activeMembers(db: D1Database, clubId: string, membershipIds: stri
   return new Set((result.results || []).map((row) => row.id));
 }
 
+const DEFAULT_CANCELLATION_MINUTES = 30;
+
+function cancellationMinutesFromConfig(configJson: string): number {
+  try {
+    const value = Number((JSON.parse(configJson) as Record<string, unknown>).reservationCancellationMinutes);
+    return Number.isInteger(value) && value >= 0 && value <= 10_080 ? value : DEFAULT_CANCELLATION_MINUTES;
+  } catch {
+    return DEFAULT_CANCELLATION_MINUTES;
+  }
+}
+
+async function clubCancellationMinutes(db: D1Database, clubId: string): Promise<number> {
+  const club = await db.prepare(`SELECT public_config_json FROM clubs WHERE id = ? AND status = 'active'`)
+    .bind(clubId).first<{ public_config_json: string }>();
+  if (!club) throw new AppError(404, "club_not_found", "The club does not exist.");
+  return cancellationMinutesFromConfig(club.public_config_json);
+}
+
+function cancellationDeadline(createdAt: string, minutes: number): string {
+  return new Date(new Date(createdAt).getTime() + minutes * 60_000).toISOString();
+}
+
 export const reservationRoutes = new Hono<AppEnv>();
 reservationRoutes.use("*", requireAuth);
 
@@ -167,7 +190,7 @@ reservationRoutes.get("/:clubId/schedule", async (c) => {
     FROM club_courts WHERE club_id = ? AND active = 1 ORDER BY sort_order, name
   `).bind(clubId).all<CourtRow>();
   const reservations = await c.env.DB.prepare(`
-    SELECT r.id, r.court_id, courts.name AS court_name, courts.surface, r.reservation_date, r.title, r.series_id,
+    SELECT r.id, r.court_id, courts.name AS court_name, courts.surface, r.reservation_date, r.title, r.series_id, r.created_at,
       r.start_time, r.end_time, r.game_type, r.status, r.owner_membership_id,
       COALESCE(owner_membership.display_name_override, owner_user.display_name) AS owner_display_name,
       mine.status AS participant_status,
@@ -683,7 +706,7 @@ reservationRoutes.get("/:clubId/me/reservations", async (c) => {
   const clubId = c.req.param("clubId");
   const membership = await requireClubMembership(c.env.DB, auth.userId, clubId);
   const result = await c.env.DB.prepare(`
-    SELECT r.id, r.court_id, courts.name AS court_name, courts.surface, r.reservation_date, r.title, r.series_id,
+    SELECT r.id, r.court_id, courts.name AS court_name, courts.surface, r.reservation_date, r.title, r.series_id, r.created_at,
       r.start_time, r.end_time, r.game_type, r.status, r.owner_membership_id,
       participants.status AS participant_status, 0 AS active_count
     FROM reservation_participants participants
@@ -698,6 +721,8 @@ reservationRoutes.get("/:clubId/me/reservations", async (c) => {
   `).bind(clubId, membership.membershipId).all<ReservationRow>();
   const rows = result.results || [];
   const participants = await reservationParticipants(c.env.DB, clubId, rows.map((item) => item.id));
+  const cancellationMinutes = await clubCancellationMinutes(c.env.DB, clubId);
+  const now = Date.now();
   return c.json({ ok: true, reservations: rows.map((item) => ({
     id: item.id,
     seriesId: item.series_id,
@@ -712,8 +737,160 @@ reservationRoutes.get("/:clubId/me/reservations", async (c) => {
     title: item.title,
     ownerMembershipId: item.owner_membership_id,
     participantStatus: item.participant_status,
+    createdAt: item.created_at,
+    canEditParticipants: item.owner_membership_id === membership.membershipId && item.status !== "completed",
+    canCancel: item.owner_membership_id === membership.membershipId
+      && cancellationMinutes > 0
+      && now <= new Date(item.created_at).getTime() + cancellationMinutes * 60_000,
+    canCancelUntil: cancellationDeadline(item.created_at, cancellationMinutes),
     participants: (participants.get(item.id) || []).map(participantJson),
-  })) });
+  })), cancellationMinutes });
+});
+
+reservationRoutes.patch("/:clubId/reservations/:reservationId/participants", async (c) => {
+  const auth = c.get("auth");
+  const clubId = c.req.param("clubId");
+  const reservationId = c.req.param("reservationId");
+  const actor = await requireClubMembership(c.env.DB, auth.userId, clubId);
+  const body = await readJsonObject(c);
+  const reservation = await c.env.DB.prepare(`
+    SELECT id, owner_membership_id, game_type, status, reservation_date, start_time, end_time
+    FROM reservations WHERE id = ? AND club_id = ?
+  `).bind(reservationId, clubId).first<{
+    id: string; owner_membership_id: string; game_type: "single" | "double"; status: string;
+    reservation_date: string; start_time: string; end_time: string;
+  }>();
+  if (!reservation || ["cancelled", "completed"].includes(reservation.status)) {
+    throw new AppError(404, "reservation_not_found", "Active reservation does not exist.");
+  }
+  const canManage = reservation.owner_membership_id === actor.membershipId || ["admin", "manager"].includes(actor.role);
+  if (!canManage) throw new AppError(403, "reservation_owner_required", "Only the reservation owner or club manager can change players.");
+
+  const requestedIds = Array.isArray(body.participantMembershipIds)
+    ? [...new Set(body.participantMembershipIds.filter((id): id is string => typeof id === "string" && id.length > 0))]
+    : [];
+  const target = reservation.game_type === "single" ? 2 : 4;
+  if (requestedIds.includes(reservation.owner_membership_id) || requestedIds.length > target - 1) {
+    throw new AppError(400, "invalid_participants", "The selected participants do not match the game type.");
+  }
+  const valid = await activeMembers(c.env.DB, clubId, requestedIds);
+  if (valid.size !== requestedIds.length) {
+    throw new AppError(400, "invalid_participants", "Every participant must be an active player of this club.");
+  }
+  const participantMode = body.participantMode === "confirmed" ? "confirmed" : "pending";
+  const existingResult = await c.env.DB.prepare(`
+    SELECT membership_id, status FROM reservation_participants
+    WHERE reservation_id = ? AND membership_id != ?
+  `).bind(reservationId, reservation.owner_membership_id).all<{ membership_id: string; status: string }>();
+  const existing = new Map((existingResult.results || []).map((row) => [row.membership_id, row.status]));
+  const requested = new Set(requestedIds);
+  const now = new Date().toISOString();
+  const statements: D1PreparedStatement[] = [];
+  let activeCount = 1;
+  let pendingCount = 0;
+
+  for (const [membershipId, previousStatus] of existing) {
+    if (!requested.has(membershipId)) {
+      statements.push(
+        c.env.DB.prepare(`DELETE FROM member_busy_slots WHERE reservation_id = ? AND membership_id = ?`).bind(reservationId, membershipId),
+        c.env.DB.prepare(`DELETE FROM reservation_participants WHERE reservation_id = ? AND membership_id = ?`).bind(reservationId, membershipId),
+        c.env.DB.prepare(`UPDATE member_notifications SET acted_at = ?, read_at = COALESCE(read_at, ?) WHERE club_id = ? AND recipient_membership_id = ? AND entity_type = 'reservation' AND entity_id = ? AND acted_at IS NULL`)
+          .bind(now, now, clubId, membershipId, reservationId),
+      );
+      if (["pending", "confirmed", "replacement"].includes(previousStatus)) {
+        statements.push(c.env.DB.prepare(`
+          INSERT INTO member_notifications (id, club_id, recipient_membership_id, actor_membership_id, type, title, body, entity_type, entity_id, created_at)
+          VALUES (?, ?, ?, ?, 'reservation_lineup_removed', 'Zmena sestavy', ?, 'reservation', ?, ?)
+        `).bind(crypto.randomUUID(), clubId, membershipId, actor.membershipId, `${reservation.reservation_date} ${reservation.start_time}-${reservation.end_time}: vlastnik rezervace zmenil sestavu.`, reservationId, now));
+      }
+      continue;
+    }
+    if (["confirmed", "replacement"].includes(previousStatus)) activeCount += 1;
+    else {
+      statements.push(
+        c.env.DB.prepare(`UPDATE reservation_participants SET status = ?, withdrawn_at = NULL, responded_at = ?, updated_at = ? WHERE reservation_id = ? AND membership_id = ?`)
+          .bind(participantMode, participantMode === "confirmed" ? now : null, now, reservationId, membershipId),
+        c.env.DB.prepare(`INSERT OR IGNORE INTO member_busy_slots (club_id, membership_id, reservation_id, slot_at) SELECT ?, ?, ?, slot_at FROM reservation_slots WHERE reservation_id = ?`)
+          .bind(clubId, membershipId, reservationId, reservationId),
+      );
+      if (participantMode === "pending") pendingCount += 1;
+      else activeCount += 1;
+    }
+  }
+
+  for (const membershipId of requestedIds.filter((id) => !existing.has(id))) {
+    statements.push(
+      c.env.DB.prepare(`INSERT INTO reservation_participants (reservation_id, membership_id, status, invited_by_membership_id, responded_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .bind(reservationId, membershipId, participantMode, actor.membershipId, participantMode === "confirmed" ? now : null, now, now),
+      c.env.DB.prepare(`INSERT INTO member_busy_slots (club_id, membership_id, reservation_id, slot_at) SELECT ?, ?, ?, slot_at FROM reservation_slots WHERE reservation_id = ?`)
+        .bind(clubId, membershipId, reservationId, reservationId),
+      c.env.DB.prepare(`INSERT INTO member_notifications (id, club_id, recipient_membership_id, actor_membership_id, type, title, body, entity_type, entity_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'reservation', ?, ?)`)
+        .bind(
+          crypto.randomUUID(), clubId, membershipId, actor.membershipId,
+          participantMode === "pending" ? "reservation_invite" : "reservation_lineup_added",
+          participantMode === "pending" ? "Pozvanka na hru" : "Pridan do rezervace",
+          `${reservation.reservation_date} ${reservation.start_time}-${reservation.end_time}.`, reservationId, now,
+        ),
+    );
+    if (participantMode === "pending") pendingCount += 1;
+    else activeCount += 1;
+  }
+
+  const nextStatus = activeCount >= target && pendingCount === 0 ? "confirmed" : pendingCount > 0 ? "pending" : "searching";
+  statements.push(
+    c.env.DB.prepare(`UPDATE reservations SET status = ?, updated_at = ? WHERE id = ? AND club_id = ?`).bind(nextStatus, now, reservationId, clubId),
+    c.env.DB.prepare(`INSERT INTO audit_events (id, club_id, actor_user_id, action, entity_type, entity_id, metadata_json, created_at) VALUES (?, ?, ?, 'reservation.participants.updated', 'reservation', ?, ?, ?)`)
+      .bind(crypto.randomUUID(), clubId, auth.userId, reservationId, JSON.stringify({ participantMembershipIds: requestedIds, participantMode }), now),
+  );
+  try {
+    await c.env.DB.batch(statements);
+  } catch (error) {
+    databaseConflict(error);
+  }
+  return c.json({ ok: true, status: nextStatus });
+});
+
+reservationRoutes.delete("/:clubId/reservations/:reservationId", async (c) => {
+  const auth = c.get("auth");
+  const clubId = c.req.param("clubId");
+  const reservationId = c.req.param("reservationId");
+  const actor = await requireClubMembership(c.env.DB, auth.userId, clubId);
+  const reservation = await c.env.DB.prepare(`
+    SELECT id, owner_membership_id, status, reservation_date, start_time, end_time, created_at
+    FROM reservations WHERE id = ? AND club_id = ?
+  `).bind(reservationId, clubId).first<{
+    id: string; owner_membership_id: string; status: string; reservation_date: string;
+    start_time: string; end_time: string; created_at: string;
+  }>();
+  if (!reservation || ["cancelled", "completed"].includes(reservation.status)) {
+    throw new AppError(404, "reservation_not_found", "Active reservation does not exist.");
+  }
+  const isManager = ["admin", "manager"].includes(actor.role);
+  if (reservation.owner_membership_id !== actor.membershipId && !isManager) {
+    throw new AppError(403, "reservation_owner_required", "Only the reservation owner or club manager can cancel it.");
+  }
+  const cancellationMinutes = await clubCancellationMinutes(c.env.DB, clubId);
+  const deadline = cancellationDeadline(reservation.created_at, cancellationMinutes);
+  if (!isManager && (cancellationMinutes === 0 || Date.now() > new Date(deadline).getTime())) {
+    throw new AppError(409, "cancellation_window_expired", "The correction time for cancelling this reservation has expired.");
+  }
+  const recipients = await c.env.DB.prepare(`SELECT membership_id FROM reservation_participants WHERE reservation_id = ? AND membership_id != ? AND status IN ('pending','confirmed','replacement')`)
+    .bind(reservationId, actor.membershipId).all<{ membership_id: string }>();
+  const now = new Date().toISOString();
+  const statements: D1PreparedStatement[] = [
+    c.env.DB.prepare(`DELETE FROM member_busy_slots WHERE reservation_id = ?`).bind(reservationId),
+    c.env.DB.prepare(`DELETE FROM reservation_slots WHERE reservation_id = ?`).bind(reservationId),
+    c.env.DB.prepare(`UPDATE reservations SET status = 'cancelled', updated_at = ? WHERE id = ? AND club_id = ?`).bind(now, reservationId, clubId),
+    c.env.DB.prepare(`UPDATE member_notifications SET acted_at = ?, read_at = COALESCE(read_at, ?) WHERE club_id = ? AND entity_type = 'reservation' AND entity_id = ? AND acted_at IS NULL`).bind(now, now, clubId, reservationId),
+    c.env.DB.prepare(`INSERT INTO audit_events (id, club_id, actor_user_id, action, entity_type, entity_id, metadata_json, created_at) VALUES (?, ?, ?, 'reservation.cancelled', 'reservation', ?, ?, ?)`)
+      .bind(crypto.randomUUID(), clubId, auth.userId, reservationId, JSON.stringify({ cancellationMinutes, deadline, managerOverride: isManager }), now),
+  ];
+  for (const recipient of recipients.results || []) {
+    statements.push(c.env.DB.prepare(`INSERT INTO member_notifications (id, club_id, recipient_membership_id, actor_membership_id, type, title, body, entity_type, entity_id, created_at) VALUES (?, ?, ?, ?, 'reservation_cancelled', 'Rezervace zrusena', ?, 'reservation', ?, ?)`)
+      .bind(crypto.randomUUID(), clubId, recipient.membership_id, actor.membershipId, `${reservation.reservation_date} ${reservation.start_time}-${reservation.end_time}.`, reservationId, now));
+  }
+  await c.env.DB.batch(statements);
+  return c.json({ ok: true, cancelledAt: now });
 });
 
 reservationRoutes.get("/:clubId/me/notifications", async (c) => {
