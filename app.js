@@ -857,6 +857,9 @@ const creditTransactions = [];
 const notifications = [];
 const friendships = [];
 const friendRequests = [];
+const platformOpenGames = [];
+let bookingFriendAvailability = new Map();
+let bookingOwnerAvailable = true;
 
 const gameProposals = [];
 
@@ -1338,7 +1341,19 @@ async function refreshPlatformReservations(daysAhead = 14) {
   const mappedMine = (mine.reservations || []).map((item) => {
     const date = dateFromIso(item.date) || appToday;
     const court = courts.find((entry) => entry.id === item.courtId) || courts[0];
-    const attendance = (item.participants || []).map(platformAttendance);
+    const externalParticipants = Array.isArray(item.externalParticipants) ? item.externalParticipants : [];
+    const attendance = [
+      ...(item.participants || []).map(platformAttendance),
+      ...externalParticipants.map((name) => ({
+        name,
+        initials: "HOST",
+        playerId: "",
+        gender: "",
+        status: "confirmed",
+        role: "mimo portal",
+        external: true
+      }))
+    ];
     return {
       id: item.id,
       eventType: item.eventType,
@@ -1358,6 +1373,7 @@ async function refreshPlatformReservations(daysAhead = 14) {
       canEditParticipants: item.canEditParticipants,
       canCancel: item.canCancel,
       canCancelUntil: item.canCancelUntil,
+      externalParticipants,
       court,
       players: attendance.map((player) => player.name),
       attendance
@@ -1423,6 +1439,19 @@ async function refreshPlatformReservations(daysAhead = 14) {
         allDailyReservations.push({ ...reservation, court: dayCourt });
       });
   });
+  replaceArray(platformOpenGames, allDailyReservations.filter((item) => item.kind !== "block" && item.status === "searching").map((item) => ({
+    id: item.id,
+    reservationId: item.id,
+    ownerName: item.ownerName || "Hrac klubu",
+    date: item.date,
+    start: item.start,
+    end: item.end,
+    gameType: item.gameType,
+    activePlayers: Number(item.activePlayers || 0),
+    targetPlayers: Number(item.targetPlayers || (item.gameType === "single" ? 2 : 4)),
+    courtName: item.court.name,
+    courtId: item.court.id
+  })));
   courts.forEach((court) => court.reservations.sort((left, right) => String(left.isoDate).localeCompare(String(right.isoDate)) || timeToMinutes(left.start) - timeToMinutes(right.start)));
   replaceArray(adminReservations, allDailyReservations.map((item) => ({
     time: `${formatPortalDate(dateFromIso(item.date))} ${item.start}-${item.end}`,
@@ -4089,16 +4118,18 @@ async function createBookingReservation() {
   const court = courtFromBookingValue(document.querySelector("#bookingCourtInput")?.value);
   const start = document.querySelector("#bookingStartInput")?.value || club.open;
   const duration = Number(document.querySelector("#bookingDurationInput")?.value || 90);
-  const end = minutesToTime(Math.min(timeToMinutes(club.close), timeToMinutes(start) + duration));
+  const end = minutesToTime(timeToMinutes(start) + duration);
   const gameType = document.querySelector("#bookingGameTypeInput")?.value || "single";
-  const partnerId = document.querySelector("#bookingPartnerInput")?.value || "";
-  const partnerMode = document.querySelector("#bookingPartnerModeInput")?.value || "invite";
+  const playerPlan = document.querySelector('input[name="bookingPlayerPlan"]:checked')?.value || "external";
+  const partnerMode = document.querySelector("#bookingPartnerModeInput")?.value || "pending";
+  const selectedFriends = [...document.querySelectorAll('input[name="bookingFriend"]:checked')].map((input) => input.value);
+  const externalParticipants = [...document.querySelectorAll('[name="bookingExternalPlayer"]')].map((input, index) => input.value.trim() || `Host mimo portal ${index + 1}`);
   const selectedDate = selectedBookingDateObject();
   const isoDate = dateToIso(selectedDate);
   const day = weekdayCodes[selectedDate.getDay()];
   const date = bookingDateForSelectedDay();
-  if (!court || timeToMinutes(end) <= timeToMinutes(start)) {
-    lastActionMessage = "Zvol platny kurt, zacatek a delku rezervace.";
+  if (!court || timeToMinutes(end) <= timeToMinutes(start) || timeToMinutes(end) > timeToMinutes(court.closeTime || club.close)) {
+    lastActionMessage = `Zvol platný čas tak, aby hra skončila nejpozději v ${court?.closeTime || club.close}.`;
     return false;
   }
   if (bookingOverlaps(court, start, end)) {
@@ -4109,14 +4140,33 @@ async function createBookingReservation() {
     lastActionMessage = "V tomto case uz mas jinou rezervaci.";
     return false;
   }
-  if (partnerId && playerHasTimeCollision(partnerId, day, isoDate, start, end)) {
-    lastActionMessage = `${playerRecordById(partnerId)?.name || "Spoluhrac"} uz v tomto case hraje. Vyber jiny termin.`;
+  const target = gameType === "single" ? 2 : 4;
+  if (selectedFriends.length > target - 1) {
+    lastActionMessage = `${gameType === "single" ? "Single" : "Double"} dovoluje nejvýše ${target - 1} spoluhráče.`;
     return false;
   }
+  if (playerPlan === "external" && (!document.querySelector("#bookingExternalConfirmed")?.checked || externalParticipants.length !== target - 1)) {
+    lastActionMessage = "Potvrd, ze mas celou sestavu domluvenou mimo portal.";
+    return false;
+  }
+  if (playerPlan === "friends" && !selectedFriends.length) {
+    lastActionMessage = "Vyber alespon jednoho potvrzeneho kamarada.";
+    return false;
+  }
+  for (const playerId of selectedFriends) {
+    if (!areFriends(currentPersonaId(), playerId)) {
+      lastActionMessage = "Primo lze pozvat jen potvrzene kamarady.";
+      return false;
+    }
+    if (bookingFriendAvailability.get(playerId) === false || playerHasTimeCollision(playerId, day, isoDate, start, end)) {
+      lastActionMessage = `${playerRecordById(playerId)?.name || "Spoluhrac"} uz v tomto case hraje.`;
+      return false;
+    }
+  }
   if (platformContext.enabled) {
-    const participantMembershipIds = partnerId ? [platformContext.membersByPersona.get(partnerId)].filter(Boolean) : [];
-    if (partnerId && !participantMembershipIds.length) {
-      lastActionMessage = "Vybrany spoluhrac nema aktivni clenstvi v tomto klubu.";
+    const participantMembershipIds = selectedFriends.map((id) => platformContext.membersByPersona.get(id)).filter(Boolean);
+    if (participantMembershipIds.length !== selectedFriends.length) {
+      lastActionMessage = "Nektery kamarad uz nema aktivni clenstvi v tomto klubu.";
       return false;
     }
     try {
@@ -4129,31 +4179,35 @@ async function createBookingReservation() {
           end,
           gameType,
           participantMembershipIds,
-          participantMode: partnerMode === "confirmed" ? "confirmed" : "pending"
+          participantMode: partnerMode === "confirmed" ? "confirmed" : "pending",
+          playerPlan,
+          externalParticipants: playerPlan === "external" ? externalParticipants : []
         })
       });
       await refreshPlatformReservations();
-      lastActionMessage = partnerId && partnerMode === "invite"
-        ? "Rezervace je ulozena a spoluhrac dostal pozvanku."
-        : "Rezervace je ulozena v klubovem rozvrhu.";
+      lastActionMessage = playerPlan === "friends" && partnerMode !== "confirmed"
+        ? "Rezervace je ulozena a kamaradi dostali pozvanku."
+        : playerPlan === "search"
+          ? "Rezervace je ulozena a hledani spoluhracu bylo zverejneno."
+          : "Rezervace je potvrzena v klubovem rozvrhu.";
       return true;
     } catch (error) {
-      lastActionMessage = error.code === "booking_conflict" ? "Kurt nebo nektery hrac uz je v tomto case obsazeny." : error.message;
+      lastActionMessage = ["booking_conflict", "player_time_conflict"].includes(error.code) ? "Kurt nebo nektery vybrany hrac uz je v tomto case obsazeny." : error.message;
       return false;
     }
   }
   const owner = currentPlayerRecord();
   const reservationId = `reservation-${Date.now()}-${currentPersonaId()}`;
   const attendance = [attendanceFromPlayerId(currentPersonaId(), "active", "vytvoril rezervaci")];
-  if (partnerId) {
+  selectedFriends.forEach((partnerId) => {
     attendance.push(attendanceFromPlayerId(
       partnerId,
       partnerMode === "confirmed" ? "confirmed" : "pending",
       partnerMode === "confirmed" ? "jde rovnou" : "ceka na potvrzeni"
     ));
-  }
-  const target = gameType === "single" ? 2 : 4;
-  const bookingType = partnerId && partnerMode === "invite" ? "pending" : attendance.filter(activeForGame).length >= target ? "mine" : "group";
+  });
+  if (playerPlan === "external") externalParticipants.forEach((name) => attendance.push({ name, initials: "HOST", playerId: "", status: "confirmed", role: "mimo portal", external: true }));
+  const bookingType = playerPlan === "search" ? "group" : selectedFriends.length && partnerMode !== "confirmed" ? "pending" : attendance.filter(activeForGame).length >= target ? "mine" : "group";
   const createdAt = new Date().toISOString();
   const reservation = {
     id: reservationId,
@@ -4169,6 +4223,8 @@ async function createBookingReservation() {
     end,
     kind: "Jednorazova",
     gameType,
+    status: bookingType === "mine" ? "confirmed" : bookingType === "pending" ? "pending" : "searching",
+    externalParticipants: playerPlan === "external" ? externalParticipants : [],
     court,
     players: attendance.map((player) => player.name),
     attendance
@@ -4194,17 +4250,17 @@ async function createBookingReservation() {
     tone: bookingType === "pending" ? "warn" : "good",
     reservationId
   });
-  if (partnerId && partnerMode === "invite") {
+  if (selectedFriends.length && partnerMode !== "confirmed") {
     const dateLabel = reservationTimeLabel(reservation);
-    notifications.push({
-      id: `booking-invite-${reservationId}-${partnerId}`,
-      type: "booking-invite",
-      recipients: [partnerId],
-      title: "Pozvanka k rezervaci",
-      meta: `${owner.name} te zve: ${dateLabel}, ${court.name}`,
-      status: "Ceka na potvrzeni",
-      reservationId
-    });
+    selectedFriends.forEach((partnerId) => notifications.push({
+        id: `booking-invite-${reservationId}-${partnerId}`,
+        type: "booking-invite",
+        recipients: [partnerId],
+        title: "Pozvanka k rezervaci",
+        meta: `${owner.name} te zve: ${dateLabel}, ${court.name}`,
+        status: "Ceka na potvrzeni",
+        reservationId
+      }));
   }
   persistData();
   return true;
@@ -4920,9 +4976,21 @@ function slotJoinState(data = {}, playerId = currentPersonaId()) {
   return { allowed: true, court, slot, reservation, reason: "Muzes se prihlasit jako kandidat." };
 }
 
-function joinOpenSlot(courtName = "", time = "") {
+async function joinOpenSlot(courtName = "", time = "") {
   const stateInfo = slotJoinState({ court: courtName, time });
   if (!stateInfo.allowed) return false;
+  const reservationId = stateInfo.reservation?.id || stateInfo.slot?.reservationId;
+  if (platformContext.enabled && reservationId) {
+    try {
+      await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${reservationId}/join-request`, { method: "POST" });
+      await refreshPlatformReservations();
+      lastActionMessage = "Žádost je odeslaná. Hráči v sestavě ji teď potvrdí hlasováním.";
+      return true;
+    } catch (error) {
+      lastActionMessage = error.code === "player_time_conflict" ? "V tomto termínu už hraješ jinde." : error.message;
+      return false;
+    }
+  }
   const playerId = currentPersonaId();
   if (stateInfo.reservation?.attendance) {
     stateInfo.reservation.attendance.push(attendanceFromPlayerId(playerId, "candidate", "hlasi se do hry"));
@@ -4950,6 +5018,19 @@ function joinOpenSlot(courtName = "", time = "") {
   }
   persistData();
   return true;
+}
+
+async function joinPlatformOpenGame(reservationId = "") {
+  if (!platformContext.enabled || !reservationId) return false;
+  try {
+    await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${reservationId}/join-request`, { method: "POST" });
+    await refreshPlatformReservations();
+    lastActionMessage = "Žádost je odeslaná. Sestava tě musí potvrdit hlasováním.";
+    return true;
+  } catch (error) {
+    lastActionMessage = error.code === "player_time_conflict" ? "V tomto termínu už máš jinou hru." : error.message;
+    return false;
+  }
 }
 
 function courtReservations(court) {
@@ -7074,10 +7155,29 @@ async function updateReservationParticipants(reservationIndex) {
     lastActionMessage = "Sestavu muze menit jen vlastnik rezervace.";
     return false;
   }
+  const playerPlan = document.querySelector('input[name="reservationPlayerPlan"]:checked')?.value || "friends";
   const selected = [...document.querySelectorAll('input[name="reservationParticipant"]:checked')].map((input) => input.value);
+  const externalParticipants = [...document.querySelectorAll('[name="reservationExternalPlayer"]')].map((input, index) => input.value.trim() || `Host mimo portal ${index + 1}`);
   const limit = reservationTargetPlayers(reservation) - 1;
   if (selected.length > limit) {
     lastActionMessage = `${reservationGameLabel(reservation)} dovoluje vybrat nejvyse ${limit} spoluhrace.`;
+    return false;
+  }
+  if (playerPlan === "external" && (!document.querySelector("#reservationExternalConfirmed")?.checked || externalParticipants.length !== limit)) {
+    lastActionMessage = "Potvrd, ze mas celou sestavu mimo portal domluvenou.";
+    return false;
+  }
+  if (playerPlan === "friends" && !selected.length) {
+    lastActionMessage = "Vyber alespon jednoho kamarada, nebo zvol jinou moznost sestavy.";
+    return false;
+  }
+  const existingIds = new Set(normalizedAttendance(reservation).map((player) => player.playerId).filter(Boolean));
+  if (playerPlan === "friends" && selected.some((id) => !existingIds.has(id) && !areFriends(currentPersonaId(), id))) {
+    lastActionMessage = "Nove lze pridat jen potvrzene kamarady.";
+    return false;
+  }
+  if (playerPlan === "friends" && selected.some((id) => bookingFriendAvailability.get(id) === false)) {
+    lastActionMessage = "Nektery vybrany kamarad uz v tomto terminu hraje.";
     return false;
   }
   const participantMode = document.querySelector("#reservationParticipantMode")?.value === "confirmed" ? "confirmed" : "pending";
@@ -7090,7 +7190,12 @@ async function updateReservationParticipants(reservationIndex) {
     try {
       await platformRequest(`/api/v2/clubs/${platformContext.clubId}/reservations/${reservation.id}/participants`, {
         method: "PATCH",
-        body: JSON.stringify({ participantMembershipIds, participantMode })
+        body: JSON.stringify({
+          participantMembershipIds: playerPlan === "friends" ? participantMembershipIds : [],
+          participantMode,
+          playerPlan,
+          externalParticipants: playerPlan === "external" ? externalParticipants : []
+        })
       });
       await refreshPlatformReservations();
     } catch (error) {
@@ -7099,7 +7204,11 @@ async function updateReservationParticipants(reservationIndex) {
     }
   } else {
     const owner = normalizedAttendance(reservation)[0];
-    reservation.attendance = [owner, ...selected.map((id) => attendanceFromPlayerId(id, participantMode, participantMode === "confirmed" ? "ucast potvrzena" : "ceka na potvrzeni"))];
+    reservation.attendance = [owner];
+    if (playerPlan === "friends") reservation.attendance.push(...selected.map((id) => attendanceFromPlayerId(id, participantMode, participantMode === "confirmed" ? "ucast potvrzena" : "ceka na potvrzeni")));
+    if (playerPlan === "external") reservation.attendance.push(...externalParticipants.map((name) => ({ name, initials: "HOST", playerId: "", status: "confirmed", role: "mimo portal", external: true })));
+    reservation.externalParticipants = playerPlan === "external" ? externalParticipants : [];
+    reservation.status = playerPlan === "search" ? "searching" : reservation.attendance.filter(activeForGame).length >= reservationTargetPlayers(reservation) ? "confirmed" : "pending";
     reservation.players = reservation.attendance.map((player) => player.name);
     persistData();
   }
@@ -7293,7 +7402,7 @@ function largeScheduleSlot(court, time) {
 function renderPlayers() {
   const friends = friendsForPlayer();
   const clubPlayers = players.filter((player) => player.id !== currentPersonaId() && !areFriends(currentPersonaId(), player.id));
-  const seekingPlayers = players.filter((player) => {
+  const seekingPlayers = platformContext.enabled ? platformOpenGames : players.filter((player) => {
     const need = (player.reservationNeed || "").toLowerCase();
     return need.includes("hleda") || need.includes("chybi");
   });
@@ -7312,7 +7421,7 @@ function renderPlayers() {
           </div>
           <span class="pill">${seekingPlayers.length}</span>
         </div>
-        ${seekingPlayers.length ? playerList(seekingPlayers, "seeking-list") : `<div class="history-card compact-empty"><strong>Nikdo ted nehleda</strong><small>Jakmile nekdo vytvori poptavku, objevi se tady.</small></div>`}
+        ${seekingPlayers.length ? (platformContext.enabled ? openGameList(seekingPlayers) : playerList(seekingPlayers, "seeking-list")) : `<div class="history-card compact-empty"><strong>Nikdo teď nehledá</strong><small>Jakmile někdo vytvoří poptávku, objeví se tady.</small></div>`}
       </section>
       <section class="section">
         <div class="section-head" data-help-target="player-friends">
@@ -7332,6 +7441,16 @@ function renderPlayers() {
       </section>
     </section>
   `;
+}
+
+function openGameList(items = []) {
+  return `<div class="player-list seeking-list">${items.map((game) => {
+    const date = dateFromIso(game.date);
+    const mine = personalReservations.some((reservation) => reservation.id === game.reservationId);
+    const collision = playerHasTimeCollision(currentPersonaId(), date ? weekdayCodes[date.getDay()] : "", game.date, game.start, game.end, game.reservationId);
+    const disabled = mine || collision;
+    return `<article class="open-game-card"><span class="avatar gender-male">${escapeAttribute(game.ownerName).slice(0, 2).toUpperCase()}</span><span><strong>${game.ownerName} hledá spoluhráče</strong><small>${formatPortalDate(date)} · ${game.start}-${game.end} · ${game.courtName}</small><small>${game.gameType === "single" ? "Single" : "Double"} · sestava ${game.activePlayers}/${game.targetPlayers}</small></span><button class="secondary-button" data-action="join-open-game" data-reservation-id="${game.reservationId}" ${disabled ? "disabled" : ""}>${mine ? "Už hraješ" : collision ? "Nemáš volno" : "Přidat se"}</button></article>`;
+  }).join("")}</div>`;
 }
 
 function playerList(items, className = "") {
@@ -8813,21 +8932,76 @@ function openModal(kind, data = {}) {
   modalContent.innerHTML = (modals[kind] || busyModal)(data);
   applyAvatarPhotos(modalContent);
   modalBackdrop.hidden = false;
+  if (kind === "book") queueMicrotask(() => refreshBookingFriendAvailability());
+  if (kind === "reservation-edit") queueMicrotask(() => refreshReservationEditAvailability(Number(data.reservation || 0)));
+}
+
+function bookingFriends() {
+  return friendsForPlayer().filter((player) => !platformContext.enabled || platformContext.membersByPersona.get(player.id));
+}
+
+function bookingLineupFieldsHtml(plan = "external", gameType = "single", selectedFriends = [], externalNames = []) {
+  const target = gameType === "single" ? 2 : 4;
+  if (plan === "external") {
+    return `<div class="booking-lineup-panel"><strong>Potvrď vlastní sestavu</strong><small>Spoluhráči nemusí mít účet. Jejich jména slouží jen pro přehled rezervace.</small>${Array.from({ length: target - 1 }, (_, index) => `<div class="field"><label>${index === 0 ? "Spoluhráč" : `Hráč ${index + 2}`} mimo portál</label><input name="bookingExternalPlayer" value="${escapeAttribute(externalNames[index] || "")}" placeholder="Jméno nebo označení hosta"></div>`).join("")}<label class="booking-confirm"><input id="bookingExternalConfirmed" type="checkbox"> <span>Potvrzuji, že jsme domluvení a všichni mají v tomto termínu čas.</span></label></div>`;
+  }
+  if (plan === "friends") {
+    const friends = bookingFriends();
+    return `<div class="booking-lineup-panel"><strong>Vyber potvrzené kamarády</strong><small>Zobrazujeme jen hráče, se kterými jste oba potvrdili přátelství.</small><div class="booking-friend-list">${friends.length ? friends.map((player) => {
+      const availability = bookingFriendAvailability.get(player.id);
+      const disabled = availability === false;
+      const status = availability === false ? "Už v tomto čase hraje" : availability === true ? "V termínu volný" : "Ověřuji dostupnost";
+      return `<label class="booking-friend ${disabled ? "is-busy" : ""}"><input type="checkbox" name="bookingFriend" value="${player.id}" ${selectedFriends.includes(player.id) ? "checked" : ""} ${disabled ? "disabled" : ""}><span class="avatar tiny-avatar ${player.gender === "female" ? "gender-female" : "gender-male"}" data-player="${player.id}">${avatarContent(player)}</span><span><b>${player.name}</b><small>${status}</small></span></label>`;
+    }).join("") : `<p class="compact-empty">Zatím nemáš potvrzené kamarády. Nejdřív pošli žádost v sekci Hráči.</p>`}</div><div class="field"><label>Potvrzení účasti</label><select id="bookingPartnerModeInput"><option value="pending">Poslat pozvánku a počkat na potvrzení</option><option value="confirmed">Jsme domluvení, rovnou je potvrdit</option></select></div></div>`;
+  }
+  return `<div class="booking-lineup-panel booking-search-panel"><strong>Zveřejnit hledání spoluhráčů</strong><small>Portál osloví jen volné hráče. Kamarádi dostanou přednost, ostatní hráči klubu uvidí otevřenou hru v sekci Hráči.</small><span class="booking-search-warning">Použij až tehdy, když nemáš domluvenou sestavu ani vhodného kamaráda.</span></div>`;
+}
+
+function updateBookingLineupFields() {
+  const container = document.querySelector("#bookingLineupFields");
+  if (!container) return;
+  const selected = [...document.querySelectorAll('input[name="bookingFriend"]:checked')].map((input) => input.value);
+  const names = [...document.querySelectorAll('[name="bookingExternalPlayer"]')].map((input) => input.value);
+  const plan = document.querySelector('input[name="bookingPlayerPlan"]:checked')?.value || "external";
+  const gameType = document.querySelector("#bookingGameTypeInput")?.value || "single";
+  container.innerHTML = bookingLineupFieldsHtml(plan, gameType, selected, names);
+  applyAvatarPhotos(container);
+}
+
+async function refreshBookingFriendAvailability() {
+  const start = document.querySelector("#bookingStartInput")?.value;
+  const duration = Number(document.querySelector("#bookingDurationInput")?.value || 90);
+  if (!start) return;
+  const end = minutesToTime(timeToMinutes(start) + duration);
+  bookingFriendAvailability = new Map();
+  bookingOwnerAvailable = !playerHasTimeCollision(currentPersonaId(), weekdayCodes[selectedBookingDateObject().getDay()], selectedBookingIsoDate(), start, end);
+  if (platformContext.enabled) {
+    try {
+      const payload = await platformRequest(`/api/v2/clubs/${platformContext.clubId}/friend-availability?date=${selectedBookingIsoDate()}&start=${start}&end=${end}`);
+      bookingOwnerAvailable = payload.ownerAvailable !== false;
+      (payload.friends || []).forEach((friend) => {
+        const personaId = platformPersonaByMembership(friend.membershipId);
+        if (personaId) bookingFriendAvailability.set(personaId, friend.available === true);
+      });
+    } catch (_) {}
+  } else {
+    bookingFriends().forEach((friend) => bookingFriendAvailability.set(friend.id, !playerHasTimeCollision(friend.id, weekdayCodes[selectedBookingDateObject().getDay()], selectedBookingIsoDate(), start, end)));
+  }
+  updateBookingLineupFields();
+  const warning = document.querySelector("#bookingOwnerConflict");
+  if (warning) warning.hidden = bookingOwnerAvailable;
 }
 
 function bookingModal(data) {
   const selectedCourt = courtFromBookingValue(data.court);
   const selectedDateLabel = formatPortalDate(selectedBookingDateObject());
-  const playerOptions = players
-    .filter((player) => player.id !== currentPersonaId())
-    .map((player) => `<option value="${player.id}">${player.name} · ${player.level}</option>`)
-    .join("");
+  bookingFriendAvailability = new Map();
   return `
     <div class="modal-body">
       <div>
         <p class="eyebrow">Rezervace</p>
         <h2 id="modalTitle">Zabookovat kurt</h2>
-        <p class="muted">${selectedDateLabel}. Vyber kurt, cas a spoluhrace. Pokud spoluhrac potvrzuje, slot se docasne zablokuje tmave sede s otaznikem.</p>
+        <p class="muted">${selectedDateLabel}. Nejdřív vyber termín, potom jednoduše řekni, s kým jdeš.</p>
       </div>
       <div class="form-grid">
         <div class="field"><label>Den a datum</label><input id="bookingDateLabelInput" value="${selectedDateLabel}" readonly></div>
@@ -8835,10 +9009,15 @@ function bookingModal(data) {
         <div class="field"><label>Kurt</label><select id="bookingCourtInput">${courts.map((court) => `<option value="${court.id}" ${court.id === selectedCourt.id ? "selected" : ""}>${court.name} · ${court.surface}</option>`).join("")}</select></div>
         <div class="field"><label>Od</label><select id="bookingStartInput">${slots().map((time) => `<option ${time === data.time ? "selected" : ""}>${time}</option>`).join("")}</select></div>
         <div class="field"><label>Delka</label><select id="bookingDurationInput">${club.defaultDurations.map((duration) => `<option value="${duration}" ${duration === 90 ? "selected" : ""}>${duration / 60} h</option>`).join("")}</select></div>
-        <div class="field"><label>Spoluhrac z klubu</label><select id="bookingPartnerInput"><option value="">Zatim bez spoluhrace / hledat pozdeji</option>${playerOptions}</select></div>
-        <div class="field"><label>Stav spoluhrace</label><select id="bookingPartnerModeInput"><option value="invite">Poslat zpravu a cekat na potvrzeni</option><option value="confirmed">Vim, ze jde - rovnou zapsat</option></select></div>
-        <div class="field"><label>Cena rezervace</label><input value="Po odehrani se odecte z kluboveho kreditu" readonly></div>
+        <div class="field"><label>Cena rezervace</label><div class="readonly-value">Po odehrani se odecte z kluboveho kreditu</div></div>
       </div>
+      <p id="bookingOwnerConflict" class="booking-conflict" hidden>V tomto termínu už máš jinou hru. Vyber jiný čas.</p>
+      <fieldset class="booking-plan"><legend>S kým jdeš hrát?</legend>
+        <label class="booking-plan-option"><input type="radio" name="bookingPlayerPlan" value="external" checked><span><b>Mám vlastní sestavu</b><small>Kamarád nebo host nemusí být v systému</small></span></label>
+        <label class="booking-plan-option"><input type="radio" name="bookingPlayerPlan" value="friends"><span><b>Pozvat moje kamarády</b><small>Jen potvrzení přátelé, kteří mají volno</small></span></label>
+        <label class="booking-plan-option search-last"><input type="radio" name="bookingPlayerPlan" value="search"><span><b>Hledám spoluhráče</b><small>Veřejná poptávka mezi volnými hráči klubu</small></span></label>
+      </fieldset>
+      <div id="bookingLineupFields">${bookingLineupFieldsHtml("external", "single")}</div>
       <button class="primary-button" data-confirm="book">Potvrdit rezervaci</button>
     </div>
   `;
@@ -9097,8 +9276,41 @@ function reservationEditModal(data) {
     .filter((player) => player.playerId !== currentPersonaId() && !["declined", "candidate"].includes(player.status))
     .map((player) => player.playerId));
   const limit = reservationTargetPlayers(reservation) - 1;
-  const choices = players.filter((player) => player.id !== currentPersonaId() && (player.clubRole || "player") === "player" && (!platformContext.enabled || platformContext.membersByPersona.get(player.id)));
-  return `<div class="modal-body"><div><p class="eyebrow">Oprava rezervace</p><h2 id="modalTitle">Zmenit spoluhrace</h2><p class="muted">${reservationDateLabel(reservation)} · ${reservation.start}-${reservation.end} · ${reservationGameLabel(reservation)}. Vyber nejvyse ${limit} hrace.</p></div><div class="player-choice-grid">${choices.map((player) => `<label class="profile-row"><span><span class="avatar tiny-avatar ${player.gender === "female" ? "gender-female" : "gender-male"}">${player.initials}</span> ${player.name}</span><input type="checkbox" name="reservationParticipant" value="${player.id}" ${selected.has(player.id) ? "checked" : ""}></label>`).join("")}</div><div class="field"><label>Stav vybranych hracu</label><select id="reservationParticipantMode"><option value="pending">Poslat pozvanku a cekat na potvrzeni</option><option value="confirmed">Uz jsme domluveni, rovnou potvrdit</option></select></div><button class="primary-button" data-confirm="reservation-participants-save" data-reservation="${reservationIndex}">Ulozit sestavu</button></div>`;
+  const external = reservation.externalParticipants || [];
+  const currentPlan = external.length ? "external" : reservation.status === "searching" && selected.size === 0 ? "search" : "friends";
+  const choices = [...new Map([
+    ...bookingFriends(),
+    ...players.filter((player) => selected.has(player.id))
+  ].map((player) => [player.id, player])).values()].filter((player) => player.id !== currentPersonaId() && (!platformContext.enabled || platformContext.membersByPersona.get(player.id)));
+  const friendFields = `<div class="booking-lineup-panel"><strong>Kamarádi v portálu</strong><small>Nově lze přidat jen potvrzené kamarády. Stávající sestava zůstává zachována.</small><div class="booking-friend-list">${choices.length ? choices.map((player) => {
+    const unavailable = bookingFriendAvailability.get(player.id) === false;
+    const existing = selected.has(player.id);
+    return `<label class="booking-friend ${unavailable && !existing ? "is-busy" : ""}"><input type="checkbox" name="reservationParticipant" value="${player.id}" ${existing ? "checked" : ""} ${unavailable && !existing ? "disabled" : ""}><span class="avatar tiny-avatar ${player.gender === "female" ? "gender-female" : "gender-male"}" data-player="${player.id}">${avatarContent(player)}</span><span><b>${player.name}</b><small>${existing && !areFriends(currentPersonaId(), player.id) ? "Stávající sestava" : unavailable ? "Už v tomto čase hraje" : "Volný kamarád"}</small></span></label>`;
+  }).join("") : `<p class="compact-empty">Zatím nemáš potvrzené kamarády.</p>`}</div><div class="field"><label>Stav vybraných hráčů</label><select id="reservationParticipantMode"><option value="pending">Poslat pozvánku a čekat na potvrzení</option><option value="confirmed">Jsme domluvení, rovnou potvrdit</option></select></div></div>`;
+  const externalFields = `<div class="booking-lineup-panel"><strong>Vlastní sestava mimo portál</strong>${Array.from({ length: limit }, (_, index) => `<div class="field"><label>${index === 0 ? "Spoluhráč" : `Hráč ${index + 2}`} mimo portál</label><input name="reservationExternalPlayer" value="${escapeAttribute(external[index] || "")}" placeholder="Jméno nebo označení hosta"></div>`).join("")}<label class="booking-confirm"><input id="reservationExternalConfirmed" type="checkbox" ${external.length ? "checked" : ""}> <span>Potvrzuji, že jsme domluvení a všichni mají čas.</span></label></div>`;
+  const searchFields = `<div class="booking-lineup-panel booking-search-panel"><strong>Veřejné hledání</strong><small>Portál osloví dostupné hráče. Přihlášeného kandidáta musí sestava potvrdit.</small></div>`;
+  return `<div class="modal-body"><div><p class="eyebrow">Oprava rezervace</p><h2 id="modalTitle">Změnit sestavu</h2><p class="muted">${reservationDateLabel(reservation)} · ${reservation.start}-${reservation.end} · ${reservationGameLabel(reservation)}.</p></div><fieldset class="booking-plan"><legend>Jak chceš sestavu doplnit?</legend><label class="booking-plan-option"><input type="radio" name="reservationPlayerPlan" value="external" ${currentPlan === "external" ? "checked" : ""}><span><b>Mám vlastní sestavu</b><small>Spoluhráči mimo portál</small></span></label><label class="booking-plan-option"><input type="radio" name="reservationPlayerPlan" value="friends" ${currentPlan === "friends" ? "checked" : ""}><span><b>Přidat kamarády</b><small>Jen potvrzení přátelé, kteří mají volno</small></span></label><label class="booking-plan-option search-last"><input type="radio" name="reservationPlayerPlan" value="search" ${currentPlan === "search" ? "checked" : ""}><span><b>Hledat veřejně</b><small>Poslední možnost pro doplnění sestavy</small></span></label></fieldset><div id="reservationLineupFields">${currentPlan === "external" ? externalFields : currentPlan === "search" ? searchFields : friendFields}</div><template id="reservationFriendsTemplate">${friendFields}</template><template id="reservationExternalTemplate">${externalFields}</template><template id="reservationSearchTemplate">${searchFields}</template><button class="primary-button" data-confirm="reservation-participants-save" data-reservation="${reservationIndex}">Uložit sestavu</button></div>`;
+}
+
+async function refreshReservationEditAvailability(reservationIndex) {
+  const reservation = personalReservations[reservationIndex];
+  if (!reservation) return;
+  bookingFriendAvailability = new Map();
+  if (platformContext.enabled) {
+    try {
+      const payload = await platformRequest(`/api/v2/clubs/${platformContext.clubId}/friend-availability?date=${reservationIsoDate(reservation)}&start=${reservation.start}&end=${reservation.end}&excludeReservationId=${reservation.id}`);
+      (payload.friends || []).forEach((friend) => {
+        const personaId = platformPersonaByMembership(friend.membershipId);
+        if (personaId) bookingFriendAvailability.set(personaId, friend.available === true);
+      });
+    } catch (_) {}
+  } else {
+    bookingFriends().forEach((friend) => bookingFriendAvailability.set(friend.id, !playerHasTimeCollision(friend.id, reservation.day, reservationIsoDate(reservation), reservation.start, reservation.end, reservation.id)));
+  }
+  if (!modalBackdrop.hidden) {
+    modalContent.innerHTML = reservationEditModal({ reservation: reservationIndex });
+    applyAvatarPhotos(modalContent);
+  }
 }
 
 function reservationCancelModal(data) {
@@ -9339,6 +9551,17 @@ function notificationDetailModal(data = {}) {
   if (item?.type === "poll") {
     const poll = pollById(item.pollId);
     return productPollModal({ poll: poll.id });
+  }
+  if (item?.type === "open_game") {
+    const game = platformOpenGames.find((entry) => entry.reservationId === item.reservationId);
+    const date = dateFromIso(game?.date);
+    const collision = game ? playerHasTimeCollision(currentPersonaId(), date ? weekdayCodes[date.getDay()] : "", game.date, game.start, game.end, game.reservationId) : false;
+    return `
+      <div class="modal-body">
+        <div><p class="eyebrow">Otevřená hra</p><h2 id="modalTitle">${game?.ownerName || item.title}</h2><p class="muted">${item.meta}</p></div>
+        ${game ? `<div class="profile-list"><div class="profile-row"><span>Termín</span><span>${formatPortalDate(date)} · ${game.start}-${game.end}</span></div><div class="profile-row"><span>Kurt</span><span>${game.courtName}</span></div><div class="profile-row"><span>Hra</span><span>${game.gameType === "single" ? "Single" : "Double"} · ${game.activePlayers}/${game.targetPlayers}</span></div></div>` : ""}
+        <button class="primary-button" data-confirm="join-open-game" data-reservation-id="${item.reservationId || ""}" ${collision || !game ? "disabled" : ""}>${collision ? "V tomto čase už hraješ" : "Chci se přidat"}</button>
+      </div>`;
   }
   if (item?.type === "booking-invite") {
     const reservation = reservationById(item.reservationId) || personalReservations[0];
@@ -10680,6 +10903,14 @@ document.addEventListener("click", async (event) => {
     testAppBadge();
   } else if (action?.dataset.action === "test-android-notification") {
     sendAndroidNotificationTest();
+  } else if (action?.dataset.action === "join-open-game") {
+    if (await joinPlatformOpenGame(action.dataset.reservationId)) {
+      render();
+      showToast(lastActionMessage);
+    } else {
+      showToast(lastActionMessage || "Do hry se teď nejde přihlásit.");
+    }
+    return;
   } else if (action) {
     openModal(action.dataset.action, action.dataset);
   }
@@ -10898,7 +11129,14 @@ document.addEventListener("click", async (event) => {
       showToast(lastActionMessage || "Pozvanku se nepodarilo odmitnout.");
       return;
     }
-    if (kind === "join-slot") joinOpenSlot(confirm.dataset.court, confirm.dataset.time);
+    if (kind === "join-open-game" && !await joinPlatformOpenGame(confirm.dataset.reservationId)) {
+      showToast(lastActionMessage || "Do hry se teď nejde přihlásit.");
+      return;
+    }
+    if (kind === "join-slot" && !await joinOpenSlot(confirm.dataset.court, confirm.dataset.time)) {
+      showToast(lastActionMessage || "Do hry se teď nejde přihlásit.");
+      return;
+    }
     if (kind === "replacement") acceptReplacementCandidate(Number(confirm.dataset.reservation || 3), confirm.dataset.candidate || "");
     if (kind === "event" && !await saveAdminEvent()) {
       showToast(lastActionMessage || "Akci se nepodarilo vytvorit.");
@@ -11105,6 +11343,21 @@ document.addEventListener("change", (event) => {
   }
   const imageInput = event.target.closest("[data-image-upload]");
   if (imageInput) handleImageUpload(imageInput);
+  if (event.target.matches?.('input[name="bookingPlayerPlan"], #bookingGameTypeInput')) {
+    updateBookingLineupFields();
+  }
+  if (event.target.matches?.("#bookingStartInput, #bookingDurationInput")) {
+    refreshBookingFriendAvailability();
+  }
+  if (event.target.matches?.('input[name="reservationPlayerPlan"]')) {
+    const plan = event.target.value;
+    const template = document.querySelector(plan === "external" ? "#reservationExternalTemplate" : plan === "search" ? "#reservationSearchTemplate" : "#reservationFriendsTemplate");
+    const container = document.querySelector("#reservationLineupFields");
+    if (template && container) {
+      container.innerHTML = template.innerHTML;
+      applyAvatarPhotos(container);
+    }
+  }
 });
 
 modalClose.addEventListener("click", closeModal);

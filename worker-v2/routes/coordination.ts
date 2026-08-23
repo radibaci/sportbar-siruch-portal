@@ -5,10 +5,10 @@ import { AppError } from "../lib/errors";
 import { readJsonObject } from "../lib/json";
 import { requireAuth } from "../middleware/auth";
 
-type ReservationCore = { owner_membership_id: string; reservation_date: string; start_time: string; end_time: string; game_type: "single" | "double"; status: string };
+type ReservationCore = { owner_membership_id: string; reservation_date: string; start_time: string; end_time: string; game_type: "single" | "double"; status: string; external_participants_json: string };
 
 async function reservationCore(db: D1Database, clubId: string, reservationId: string) {
-  return db.prepare(`SELECT owner_membership_id, reservation_date, start_time, end_time, game_type, status FROM reservations WHERE id = ? AND club_id = ? AND status NOT IN ('cancelled','completed')`)
+  return db.prepare(`SELECT owner_membership_id, reservation_date, start_time, end_time, game_type, status, external_participants_json FROM reservations WHERE id = ? AND club_id = ? AND status NOT IN ('cancelled','completed')`)
     .bind(reservationId, clubId).first<ReservationCore>();
 }
 
@@ -132,6 +132,51 @@ coordinationRoutes.post("/:clubId/counterproposals/:proposalId/respond", async (
   return c.json({ ok: true, status: "accepted" });
 });
 
+coordinationRoutes.post("/:clubId/reservations/:reservationId/join-request", async (c) => {
+  const auth = c.get("auth");
+  const clubId = c.req.param("clubId");
+  const reservationId = c.req.param("reservationId");
+  const candidate = await requireClubMembership(c.env.DB, auth.userId, clubId, ["player"]);
+  const reservation = await reservationCore(c.env.DB, clubId, reservationId);
+  if (!reservation || reservation.status !== "searching") {
+    throw new AppError(409, "reservation_not_searching", "This reservation is no longer looking for a player.");
+  }
+  const alreadyInGame = await c.env.DB.prepare(`SELECT 1 FROM reservation_participants WHERE reservation_id = ? AND membership_id = ?`)
+    .bind(reservationId, candidate.membershipId).first();
+  if (alreadyInGame) throw new AppError(409, "already_in_reservation", "You are already part of this reservation.");
+  const existingCandidate = await c.env.DB.prepare(`SELECT 1 FROM replacement_candidates WHERE reservation_id = ? AND candidate_membership_id = ?`)
+    .bind(reservationId, candidate.membershipId).first();
+  if (existingCandidate) throw new AppError(409, "join_request_exists", "Your request is already waiting for the group.");
+  const active = await c.env.DB.prepare(`SELECT COUNT(*) AS count FROM reservation_participants WHERE reservation_id = ? AND status IN ('owner','confirmed','replacement')`)
+    .bind(reservationId).first<{ count: number }>();
+  let externalCount = 0;
+  try { externalCount = Array.isArray(JSON.parse(reservation.external_participants_json || "[]")) ? JSON.parse(reservation.external_participants_json || "[]").length : 0; } catch { externalCount = 0; }
+  const target = reservation.game_type === "single" ? 2 : 4;
+  if (Number(active?.count || 0) + externalCount >= target) throw new AppError(409, "reservation_full", "The lineup is already full.");
+  const conflict = await c.env.DB.prepare(`
+    SELECT 1 FROM member_busy_slots busy JOIN reservation_slots wanted ON wanted.reservation_id = ? AND wanted.slot_at = busy.slot_at
+    WHERE busy.club_id = ? AND busy.membership_id = ? AND busy.reservation_id != ? LIMIT 1
+  `).bind(reservationId, clubId, candidate.membershipId, reservationId).first();
+  if (conflict) throw new AppError(409, "player_time_conflict", "You already have another game at this time.");
+  const voters = await c.env.DB.prepare(`SELECT membership_id FROM reservation_participants WHERE reservation_id = ? AND status IN ('owner','confirmed','replacement')`)
+    .bind(reservationId).all<{ membership_id: string }>();
+  const now = new Date().toISOString();
+  const statements: D1PreparedStatement[] = [
+    c.env.DB.prepare(`INSERT INTO replacement_candidates (reservation_id, candidate_membership_id, invited_by_membership_id, status, responded_at, created_at) VALUES (?, ?, ?, 'accepted', ?, ?)`)
+      .bind(reservationId, candidate.membershipId, candidate.membershipId, now, now),
+    c.env.DB.prepare(`UPDATE member_notifications SET acted_at = ?, read_at = COALESCE(read_at, ?) WHERE club_id = ? AND recipient_membership_id = ? AND type = 'open_game' AND entity_type = 'reservation' AND entity_id = ? AND acted_at IS NULL`)
+      .bind(now, now, clubId, candidate.membershipId, reservationId),
+  ];
+  for (const voter of voters.results || []) {
+    statements.push(c.env.DB.prepare(`INSERT INTO member_notifications
+      (id, club_id, recipient_membership_id, actor_membership_id, type, title, body, entity_type, entity_id, created_at)
+      VALUES (?, ?, ?, ?, 'replacement_vote', 'Zadost o misto ve hre', ?, 'reservation', ?, ?)`)
+      .bind(crypto.randomUUID(), clubId, voter.membership_id, candidate.membershipId, `${reservation.reservation_date} ${reservation.start_time}-${reservation.end_time}. Hrac se chce pridat, potvrďte ho hlasovanim.`, reservationId, now));
+  }
+  await c.env.DB.batch(statements);
+  return c.json({ ok: true, status: "waiting_for_vote" }, 201);
+});
+
 coordinationRoutes.get("/:clubId/reservations/:reservationId/replacements", async (c) => {
   const auth = c.get("auth"); const clubId = c.req.param("clubId"); const reservationId = c.req.param("reservationId");
   const member = await requireClubMembership(c.env.DB, auth.userId, clubId);
@@ -186,11 +231,13 @@ coordinationRoutes.post("/:clubId/reservations/:reservationId/replacements/vote"
     selected = winner?.candidate_membership_id || null;
     if (selected) {
       const target = reservation.game_type === "single" ? 2 : 4;
+      let externalCount = 0;
+      try { const parsed = JSON.parse(reservation.external_participants_json || "[]"); externalCount = Array.isArray(parsed) ? parsed.length : 0; } catch { externalCount = 0; }
       const statements: D1PreparedStatement[] = [
         c.env.DB.prepare(`UPDATE replacement_candidates SET status = CASE WHEN candidate_membership_id = ? THEN 'selected' ELSE 'rejected' END WHERE reservation_id = ? AND status = 'accepted'`).bind(selected, reservationId),
         c.env.DB.prepare(`INSERT INTO reservation_participants (reservation_id, membership_id, status, invited_by_membership_id, responded_at, created_at, updated_at) VALUES (?, ?, 'replacement', ?, ?, ?, ?) ON CONFLICT(reservation_id,membership_id) DO UPDATE SET status='replacement', responded_at=excluded.responded_at, updated_at=excluded.updated_at`).bind(reservationId, selected, voter.membershipId, now, now, now),
         c.env.DB.prepare(`INSERT INTO member_busy_slots (club_id, membership_id, reservation_id, slot_at) SELECT ?, ?, ?, slot_at FROM reservation_slots WHERE reservation_id = ?`).bind(clubId, selected, reservationId, reservationId),
-        c.env.DB.prepare(`UPDATE reservations SET status = CASE WHEN (SELECT COUNT(*) FROM reservation_participants WHERE reservation_id = ? AND status IN ('owner','confirmed','replacement')) + 1 >= ? THEN 'confirmed' ELSE 'searching' END, updated_at = ? WHERE id = ?`).bind(reservationId, target, now, reservationId),
+        c.env.DB.prepare(`UPDATE reservations SET status = CASE WHEN (SELECT COUNT(*) FROM reservation_participants WHERE reservation_id = ? AND status IN ('owner','confirmed','replacement')) + ? >= ? THEN 'confirmed' ELSE 'searching' END, updated_at = ? WHERE id = ?`).bind(reservationId, externalCount, target, now, reservationId),
       ];
       await c.env.DB.batch(statements);
       await c.env.DB.prepare(`UPDATE member_notifications SET acted_at = ?, read_at = COALESCE(read_at, ?) WHERE club_id = ? AND entity_type = 'reservation' AND entity_id = ? AND type = 'replacement_vote' AND acted_at IS NULL`)

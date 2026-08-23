@@ -414,6 +414,66 @@ describe("platform v2 isolation", () => {
     expect(Number(vikiLocks?.count)).toBe(0);
   });
 
+  it("confirms a complete lineup with guests outside the portal", async () => {
+    const radim = await login("radim@siruch.test");
+    const created = await api("/api/v2/clubs/club-siruch/reservations", radim.cookie, {
+      method: "POST",
+      body: JSON.stringify({
+        courtId: "court-1", date: "2026-08-18", start: "10:00", end: "11:00", gameType: "single",
+        playerPlan: "external", externalParticipants: ["Kamarad mimo portal"],
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({ reservation: { status: "confirmed" } });
+    const mine = await api("/api/v2/clubs/club-siruch/me/reservations", radim.cookie);
+    expect(await mine.json()).toMatchObject({ reservations: [expect.objectContaining({ externalParticipants: ["Kamarad mimo portal"] })] });
+    const schedule = await api("/api/v2/clubs/club-siruch/schedule?from=2026-08-18&days=1", radim.cookie);
+    const games = (await schedule.json<{ courts: Array<{ reservations: Array<{ activePlayers: number }> }> }>()).courts.flatMap((court) => court.reservations);
+    expect(games).toContainEqual(expect.objectContaining({ activePlayers: 2 }));
+  });
+
+  it("offers only confirmed friends and marks a busy friend unavailable", async () => {
+    const now = "2026-08-06T10:00:00.000Z";
+    await env.DB.prepare(`INSERT INTO club_friendships (club_id,pair_key,first_membership_id,second_membership_id,created_at) VALUES ('club-siruch','m-radim__m-viki','m-radim','m-viki',?)`).bind(now).run();
+    const viki = await login("viki@siruch.test");
+    expect((await api("/api/v2/clubs/club-siruch/reservations", viki.cookie, {
+      method: "POST", body: JSON.stringify({ courtId: "court-2", date: "2026-08-19", start: "10:00", end: "11:00", gameType: "single", playerPlan: "external", externalParticipants: ["Host"] }),
+    })).status).toBe(201);
+    const radim = await login("radim@siruch.test");
+    const availability = await api("/api/v2/clubs/club-siruch/friend-availability?date=2026-08-19&start=10:00&end=11:00", radim.cookie);
+    expect(await availability.json()).toMatchObject({ friends: [{ membershipId: "m-viki", available: false }] });
+    const collision = await api("/api/v2/clubs/club-siruch/reservations", radim.cookie, {
+      method: "POST", body: JSON.stringify({ courtId: "court-1", date: "2026-08-19", start: "10:00", end: "11:00", gameType: "single", playerPlan: "friends", participantMembershipIds: ["m-viki"] }),
+    });
+    expect(collision.status).toBe(409);
+    const stranger = await api("/api/v2/clubs/club-siruch/reservations", radim.cookie, {
+      method: "POST", body: JSON.stringify({ courtId: "court-1", date: "2026-08-19", start: "12:00", end: "13:00", gameType: "single", playerPlan: "friends", participantMembershipIds: ["m-bob"] }),
+    });
+    expect(stranger.status).toBe(400);
+    expect(await stranger.json()).toMatchObject({ error: { code: "friends_only" } });
+  });
+
+  it("lets a free player request an open place once and requires the lineup vote", async () => {
+    const radim = await login("radim@siruch.test");
+    const created = await api("/api/v2/clubs/club-siruch/reservations", radim.cookie, {
+      method: "POST", body: JSON.stringify({ courtId: "court-1", date: "2026-08-20", start: "18:00", end: "19:00", gameType: "single", playerPlan: "search" }),
+    });
+    const reservationId = (await created.json<{ reservation: { id: string; status: string } }>()).reservation.id;
+    const bob = await login("bob@siruch.test");
+    expect((await api(`/api/v2/clubs/club-siruch/reservations/${reservationId}/join-request`, bob.cookie, { method: "POST" })).status).toBe(201);
+    expect((await api(`/api/v2/clubs/club-siruch/reservations/${reservationId}/join-request`, bob.cookie, { method: "POST" })).status).toBe(409);
+    const notices = await api("/api/v2/clubs/club-siruch/me/notifications", radim.cookie);
+    expect((await notices.json<{ notifications: Array<{ type: string; actor_membership_id: string }> }>()).notifications)
+      .toContainEqual(expect.objectContaining({ type: "replacement_vote", actor_membership_id: "m-bob" }));
+    const vote = await api(`/api/v2/clubs/club-siruch/reservations/${reservationId}/replacements/vote`, radim.cookie, {
+      method: "POST", body: JSON.stringify({ candidateMembershipId: "m-bob" }),
+    });
+    expect(vote.status).toBe(200);
+    expect(await vote.json()).toMatchObject({ selectedMembershipId: "m-bob" });
+    const stored = await env.DB.prepare(`SELECT status FROM reservations WHERE id = ?`).bind(reservationId).first<{ status: string }>();
+    expect(stored?.status).toBe("confirmed");
+  });
+
   it("cancels a new booking only inside the club-configured correction window", async () => {
     const radim = await login("radim@siruch.test");
     const createReservation = async (start: string, end: string) => {

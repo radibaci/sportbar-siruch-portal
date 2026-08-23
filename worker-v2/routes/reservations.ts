@@ -34,6 +34,7 @@ type ReservationRow = {
   title?: string | null;
   series_id?: string | null;
   created_at: string;
+  external_participants_json?: string;
 };
 
 type ParticipantRow = {
@@ -149,6 +150,50 @@ async function activeMembers(db: D1Database, clubId: string, membershipIds: stri
   return new Set((result.results || []).map((row) => row.id));
 }
 
+function externalParticipantsFromBody(value: unknown, limit: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, limit).map((item, index) => {
+    const name = typeof item === "string" ? item.trim().slice(0, 60) : "";
+    return name || `Host mimo portal ${index + 1}`;
+  });
+}
+
+function externalParticipantsFromJson(value?: string): string[] {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(0, 3) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function ensureFriendParticipants(db: D1Database, clubId: string, ownerMembershipId: string, participantIds: string[]) {
+  if (!participantIds.length) return;
+  const placeholders = participantIds.map(() => "?").join(",");
+  const result = await db.prepare(`
+    SELECT CASE WHEN first_membership_id = ? THEN second_membership_id ELSE first_membership_id END AS friend_id
+    FROM club_friendships
+    WHERE club_id = ? AND (first_membership_id = ? OR second_membership_id = ?)
+      AND (CASE WHEN first_membership_id = ? THEN second_membership_id ELSE first_membership_id END) IN (${placeholders})
+  `).bind(ownerMembershipId, clubId, ownerMembershipId, ownerMembershipId, ownerMembershipId, ...participantIds).all<{ friend_id: string }>();
+  if (new Set((result.results || []).map((item) => item.friend_id)).size !== participantIds.length) {
+    throw new AppError(400, "friends_only", "Only confirmed friends can be invited directly to a reservation.");
+  }
+}
+
+async function ensureMembersAvailable(db: D1Database, clubId: string, membershipIds: string[], slots: string[], ignoreReservationId = "") {
+  if (!membershipIds.length || !slots.length) return;
+  const memberPlaceholders = membershipIds.map(() => "?").join(",");
+  const slotPlaceholders = slots.map(() => "?").join(",");
+  const conflict = await db.prepare(`
+    SELECT membership_id FROM member_busy_slots
+    WHERE club_id = ? AND membership_id IN (${memberPlaceholders}) AND slot_at IN (${slotPlaceholders})
+      ${ignoreReservationId ? "AND reservation_id != ?" : ""}
+    LIMIT 1
+  `).bind(clubId, ...membershipIds, ...slots, ...(ignoreReservationId ? [ignoreReservationId] : [])).first<{ membership_id: string }>();
+  if (conflict) throw new AppError(409, "player_time_conflict", "One of the selected players already has another game at this time.");
+}
+
 const DEFAULT_CANCELLATION_MINUTES = 30;
 
 function cancellationMinutesFromConfig(configJson: string): number {
@@ -174,6 +219,40 @@ function cancellationDeadline(createdAt: string, minutes: number): string {
 export const reservationRoutes = new Hono<AppEnv>();
 reservationRoutes.use("*", requireAuth);
 
+reservationRoutes.get("/:clubId/friend-availability", async (c) => {
+  const auth = c.get("auth");
+  const clubId = c.req.param("clubId");
+  const membership = await requireClubMembership(c.env.DB, auth.userId, clubId, ["player"]);
+  const time = validateBookingTime(c.req.query("date"), c.req.query("start"), c.req.query("end"));
+  const ignoreReservationId = c.req.query("excludeReservationId") || "";
+  const friends = await c.env.DB.prepare(`
+    SELECT CASE WHEN friendships.first_membership_id = ? THEN friendships.second_membership_id ELSE friendships.first_membership_id END AS membership_id,
+      COALESCE(members.display_name_override, users.display_name) AS display_name
+    FROM club_friendships friendships
+    JOIN club_memberships members ON members.id = CASE WHEN friendships.first_membership_id = ? THEN friendships.second_membership_id ELSE friendships.first_membership_id END
+      AND members.club_id = friendships.club_id AND members.status = 'active' AND members.role = 'player'
+    JOIN platform_users users ON users.id = members.user_id AND users.status = 'active'
+    WHERE friendships.club_id = ? AND (friendships.first_membership_id = ? OR friendships.second_membership_id = ?)
+    ORDER BY display_name
+  `).bind(membership.membershipId, membership.membershipId, clubId, membership.membershipId, membership.membershipId).all<{ membership_id: string; display_name: string }>();
+  const ids = (friends.results || []).map((item) => item.membership_id);
+  const busy = new Set<string>();
+  if (ids.length) {
+    const memberPlaceholders = ids.map(() => "?").join(",");
+    const slotPlaceholders = time.slots.map(() => "?").join(",");
+    const result = await c.env.DB.prepare(`SELECT DISTINCT membership_id FROM member_busy_slots WHERE club_id = ? AND membership_id IN (${memberPlaceholders}) AND slot_at IN (${slotPlaceholders}) ${ignoreReservationId ? "AND reservation_id != ?" : ""}`)
+      .bind(clubId, ...ids, ...time.slots, ...(ignoreReservationId ? [ignoreReservationId] : [])).all<{ membership_id: string }>();
+    (result.results || []).forEach((item) => busy.add(item.membership_id));
+  }
+  let ownerAvailable = true;
+  try { await ensureMembersAvailable(c.env.DB, clubId, [membership.membershipId], time.slots, ignoreReservationId); } catch { ownerAvailable = false; }
+  return c.json({
+    ok: true,
+    ownerAvailable,
+    friends: (friends.results || []).map((item) => ({ membershipId: item.membership_id, displayName: item.display_name, available: !busy.has(item.membership_id) })),
+  });
+});
+
 reservationRoutes.get("/:clubId/schedule", async (c) => {
   const auth = c.get("auth");
   const clubId = c.req.param("clubId");
@@ -190,7 +269,7 @@ reservationRoutes.get("/:clubId/schedule", async (c) => {
     FROM club_courts WHERE club_id = ? AND active = 1 ORDER BY sort_order, name
   `).bind(clubId).all<CourtRow>();
   const reservations = await c.env.DB.prepare(`
-    SELECT r.id, r.court_id, courts.name AS court_name, courts.surface, r.reservation_date, r.title, r.series_id, r.created_at,
+    SELECT r.id, r.court_id, courts.name AS court_name, courts.surface, r.reservation_date, r.title, r.series_id, r.created_at, r.external_participants_json,
       r.start_time, r.end_time, r.game_type, r.status, r.owner_membership_id,
       COALESCE(owner_membership.display_name_override, owner_user.display_name) AS owner_display_name,
       mine.status AS participant_status,
@@ -242,7 +321,8 @@ reservationRoutes.get("/:clubId/schedule", async (c) => {
         end: item.end_time,
         gameType: item.game_type,
         status: item.status,
-        activePlayers: Number(item.active_count),
+        activePlayers: Number(item.active_count) + externalParticipantsFromJson(item.external_participants_json).length,
+        externalParticipants: externalParticipantsFromJson(item.external_participants_json),
         targetPlayers: item.game_type === "single" ? 2 : 4,
         ownerName: item.owner_display_name,
         isMine: ["owner", "confirmed", "replacement"].includes(item.participant_status || ""),
@@ -281,7 +361,7 @@ reservationRoutes.get("/:clubId/courts", async (c) => {
     FROM club_courts WHERE club_id = ? AND active = 1 ORDER BY sort_order, name
   `).bind(clubId).all<CourtRow>();
   const reservations = await c.env.DB.prepare(`
-    SELECT r.id, r.court_id, courts.name AS court_name, courts.surface, r.reservation_date,
+    SELECT r.id, r.court_id, courts.name AS court_name, courts.surface, r.reservation_date, r.external_participants_json,
       r.start_time, r.end_time, r.game_type, r.status, r.owner_membership_id,
       COALESCE(owner_membership.display_name_override, owner_user.display_name) AS owner_display_name,
       mine.status AS participant_status,
@@ -312,7 +392,8 @@ reservationRoutes.get("/:clubId/courts", async (c) => {
         end: item.end_time,
         gameType: item.game_type,
         status: item.status,
-        activePlayers: Number(item.active_count),
+        activePlayers: Number(item.active_count) + externalParticipantsFromJson(item.external_participants_json).length,
+        externalParticipants: externalParticipantsFromJson(item.external_participants_json),
         targetPlayers: item.game_type === "single" ? 2 : 4,
         ownerName: item.owner_display_name,
         isMine: ["owner", "confirmed", "replacement"].includes(item.participant_status || ""),
@@ -644,6 +725,8 @@ reservationRoutes.post("/:clubId/reservations", async (c) => {
     ? [...new Set(body.participantMembershipIds.filter((id): id is string => typeof id === "string" && id.length > 0))]
     : [];
   const targetPlayers = gameType === "single" ? 2 : 4;
+  const playerPlan = ["external", "friends", "search"].includes(String(body.playerPlan)) ? String(body.playerPlan) : "legacy";
+  const externalParticipants = externalParticipantsFromBody(body.externalParticipants, targetPlayers - 1);
   if (participantIds.includes(ownerMembershipId) || participantIds.length > targetPlayers - 1) {
     throw new AppError(400, "invalid_participants", "The selected participants do not match the game type.");
   }
@@ -651,6 +734,16 @@ reservationRoutes.post("/:clubId/reservations", async (c) => {
   if (validMembers.size !== participantIds.length) {
     throw new AppError(400, "invalid_participants", "Every participant must be an active member of this club.");
   }
+  if (playerPlan === "external" && (participantIds.length || externalParticipants.length !== targetPlayers - 1)) {
+    throw new AppError(400, "external_lineup_incomplete", "Confirm every external teammate required for this game.");
+  }
+  if (playerPlan === "friends" && (!participantIds.length || externalParticipants.length)) {
+    throw new AppError(400, "friend_lineup_required", "Choose at least one confirmed friend from the portal.");
+  }
+  if (playerPlan === "search" && (participantIds.length || externalParticipants.length)) {
+    throw new AppError(400, "search_lineup_invalid", "Public search starts without preselected teammates.");
+  }
+  if (playerPlan === "friends") await ensureFriendParticipants(c.env.DB, clubId, ownerMembershipId, participantIds);
   const courtId = typeof body.courtId === "string" ? body.courtId : "";
   const court = await c.env.DB.prepare(`
     SELECT id, name, surface, color, photo_url, open_time, close_time
@@ -661,14 +754,19 @@ reservationRoutes.post("/:clubId/reservations", async (c) => {
   if (time.start < court.open_time || time.end > court.close_time) {
     throw new AppError(400, "outside_opening_hours", "The reservation is outside this court's opening hours.");
   }
+  await ensureMembersAvailable(c.env.DB, clubId, [ownerMembershipId, ...participantIds], time.slots);
   const now = new Date().toISOString();
   const reservationId = crypto.randomUUID();
-  const status = participantIds.length + 1 >= targetPlayers && participantMode === "confirmed" ? "confirmed" : "pending";
+  const status = playerPlan === "external"
+    ? "confirmed"
+    : playerPlan === "search"
+      ? "searching"
+      : participantIds.length + 1 >= targetPlayers && participantMode === "confirmed" ? "confirmed" : "pending";
   const statements: D1PreparedStatement[] = [
     c.env.DB.prepare(`
-      INSERT INTO reservations (id, club_id, court_id, owner_membership_id, reservation_date, start_time, end_time, game_type, status, title, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(reservationId, clubId, court.id, ownerMembershipId, time.date, time.start, time.end, gameType, status, typeof body.title === "string" ? body.title.slice(0, 120) : null, now, now),
+      INSERT INTO reservations (id, club_id, court_id, owner_membership_id, reservation_date, start_time, end_time, game_type, status, title, external_participants_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(reservationId, clubId, court.id, ownerMembershipId, time.date, time.start, time.end, gameType, status, typeof body.title === "string" ? body.title.slice(0, 120) : null, JSON.stringify(externalParticipants), now, now),
     c.env.DB.prepare(`
       INSERT INTO reservation_participants (reservation_id, membership_id, status, invited_by_membership_id, created_at, updated_at)
       VALUES (?, ?, 'owner', ?, ?, ?)
@@ -693,6 +791,25 @@ reservationRoutes.post("/:clubId/reservations", async (c) => {
       `).bind(crypto.randomUUID(), clubId, participantId, membership.membershipId, `${time.date} ${time.start}-${time.end}, ${court.name}`, reservationId, now));
     }
   }
+  if (playerPlan === "search") {
+    const slotPlaceholders = time.slots.map(() => "?").join(",");
+    const candidates = await c.env.DB.prepare(`
+      SELECT candidate.id,
+        CASE WHEN friendships.pair_key IS NULL THEN 0 ELSE 1 END AS friend_score
+      FROM club_memberships candidate
+      LEFT JOIN club_friendships friendships ON friendships.club_id = candidate.club_id AND friendships.pair_key =
+        CASE WHEN candidate.id < ? THEN candidate.id || '__' || ? ELSE ? || '__' || candidate.id END
+      WHERE candidate.club_id = ? AND candidate.role = 'player' AND candidate.status = 'active' AND candidate.id != ?
+        AND NOT EXISTS (SELECT 1 FROM member_busy_slots busy WHERE busy.club_id = ? AND busy.membership_id = candidate.id AND busy.slot_at IN (${slotPlaceholders}))
+      ORDER BY friend_score DESC, candidate.joined_at ASC LIMIT 6
+    `).bind(ownerMembershipId, ownerMembershipId, ownerMembershipId, clubId, ownerMembershipId, clubId, ...time.slots).all<{ id: string }>();
+    for (const candidate of candidates.results || []) {
+      statements.push(c.env.DB.prepare(`
+        INSERT INTO member_notifications (id, club_id, recipient_membership_id, actor_membership_id, type, title, body, entity_type, entity_id, created_at)
+        VALUES (?, ?, ?, ?, 'open_game', 'Hleda spoluhrace', ?, 'reservation', ?, ?)
+      `).bind(crypto.randomUUID(), clubId, candidate.id, ownerMembershipId, `${time.date} ${time.start}-${time.end}, ${court.name}`, reservationId, now));
+    }
+  }
   try {
     await c.env.DB.batch(statements);
   } catch (error) {
@@ -706,7 +823,7 @@ reservationRoutes.get("/:clubId/me/reservations", async (c) => {
   const clubId = c.req.param("clubId");
   const membership = await requireClubMembership(c.env.DB, auth.userId, clubId);
   const result = await c.env.DB.prepare(`
-    SELECT r.id, r.court_id, courts.name AS court_name, courts.surface, r.reservation_date, r.title, r.series_id, r.created_at,
+    SELECT r.id, r.court_id, courts.name AS court_name, courts.surface, r.reservation_date, r.title, r.series_id, r.created_at, r.external_participants_json,
       r.start_time, r.end_time, r.game_type, r.status, r.owner_membership_id,
       participants.status AS participant_status, 0 AS active_count
     FROM reservation_participants participants
@@ -743,6 +860,7 @@ reservationRoutes.get("/:clubId/me/reservations", async (c) => {
       && cancellationMinutes > 0
       && now <= new Date(item.created_at).getTime() + cancellationMinutes * 60_000,
     canCancelUntil: cancellationDeadline(item.created_at, cancellationMinutes),
+    externalParticipants: externalParticipantsFromJson(item.external_participants_json),
     participants: (participants.get(item.id) || []).map(participantJson),
   })), cancellationMinutes });
 });
@@ -754,11 +872,11 @@ reservationRoutes.patch("/:clubId/reservations/:reservationId/participants", asy
   const actor = await requireClubMembership(c.env.DB, auth.userId, clubId);
   const body = await readJsonObject(c);
   const reservation = await c.env.DB.prepare(`
-    SELECT id, owner_membership_id, game_type, status, reservation_date, start_time, end_time
+    SELECT id, owner_membership_id, game_type, status, reservation_date, start_time, end_time, external_participants_json
     FROM reservations WHERE id = ? AND club_id = ?
   `).bind(reservationId, clubId).first<{
     id: string; owner_membership_id: string; game_type: "single" | "double"; status: string;
-    reservation_date: string; start_time: string; end_time: string;
+    reservation_date: string; start_time: string; end_time: string; external_participants_json: string;
   }>();
   if (!reservation || ["cancelled", "completed"].includes(reservation.status)) {
     throw new AppError(404, "reservation_not_found", "Active reservation does not exist.");
@@ -770,6 +888,8 @@ reservationRoutes.patch("/:clubId/reservations/:reservationId/participants", asy
     ? [...new Set(body.participantMembershipIds.filter((id): id is string => typeof id === "string" && id.length > 0))]
     : [];
   const target = reservation.game_type === "single" ? 2 : 4;
+  const playerPlan = ["external", "friends", "search"].includes(String(body.playerPlan)) ? String(body.playerPlan) : "legacy";
+  const externalParticipants = externalParticipantsFromBody(body.externalParticipants, target - 1);
   if (requestedIds.includes(reservation.owner_membership_id) || requestedIds.length > target - 1) {
     throw new AppError(400, "invalid_participants", "The selected participants do not match the game type.");
   }
@@ -777,12 +897,26 @@ reservationRoutes.patch("/:clubId/reservations/:reservationId/participants", asy
   if (valid.size !== requestedIds.length) {
     throw new AppError(400, "invalid_participants", "Every participant must be an active player of this club.");
   }
+  if (playerPlan === "external" && (requestedIds.length || externalParticipants.length !== target - 1)) {
+    throw new AppError(400, "external_lineup_incomplete", "Confirm every external teammate required for this game.");
+  }
+  if (playerPlan === "friends" && (!requestedIds.length || externalParticipants.length)) {
+    throw new AppError(400, "friend_lineup_required", "Choose at least one confirmed friend from the portal.");
+  }
+  if (playerPlan === "search" && (requestedIds.length || externalParticipants.length)) {
+    throw new AppError(400, "search_lineup_invalid", "Public search cannot contain preselected teammates.");
+  }
+  const reservationSlots = await c.env.DB.prepare(`SELECT slot_at FROM reservation_slots WHERE reservation_id = ?`).bind(reservationId).all<{ slot_at: string }>();
+  await ensureMembersAvailable(c.env.DB, clubId, [reservation.owner_membership_id, ...requestedIds], (reservationSlots.results || []).map((item) => item.slot_at), reservationId);
   const participantMode = body.participantMode === "confirmed" ? "confirmed" : "pending";
   const existingResult = await c.env.DB.prepare(`
     SELECT membership_id, status FROM reservation_participants
     WHERE reservation_id = ? AND membership_id != ?
   `).bind(reservationId, reservation.owner_membership_id).all<{ membership_id: string; status: string }>();
   const existing = new Map((existingResult.results || []).map((row) => [row.membership_id, row.status]));
+  if (playerPlan === "friends") {
+    await ensureFriendParticipants(c.env.DB, clubId, reservation.owner_membership_id, requestedIds.filter((id) => !existing.has(id)));
+  }
   const requested = new Set(requestedIds);
   const now = new Date().toISOString();
   const statements: D1PreparedStatement[] = [];
@@ -836,9 +970,13 @@ reservationRoutes.patch("/:clubId/reservations/:reservationId/participants", asy
     else activeCount += 1;
   }
 
-  const nextStatus = activeCount >= target && pendingCount === 0 ? "confirmed" : pendingCount > 0 ? "pending" : "searching";
+  const persistedExternalParticipants = playerPlan === "legacy" ? externalParticipantsFromJson(reservation.external_participants_json) : externalParticipants;
+  const externalCount = persistedExternalParticipants.length;
+  const nextStatus = playerPlan === "search"
+    ? "searching"
+    : activeCount + externalCount >= target && pendingCount === 0 ? "confirmed" : pendingCount > 0 ? "pending" : "searching";
   statements.push(
-    c.env.DB.prepare(`UPDATE reservations SET status = ?, updated_at = ? WHERE id = ? AND club_id = ?`).bind(nextStatus, now, reservationId, clubId),
+    c.env.DB.prepare(`UPDATE reservations SET status = ?, external_participants_json = ?, updated_at = ? WHERE id = ? AND club_id = ?`).bind(nextStatus, JSON.stringify(persistedExternalParticipants), now, reservationId, clubId),
     c.env.DB.prepare(`INSERT INTO audit_events (id, club_id, actor_user_id, action, entity_type, entity_id, metadata_json, created_at) VALUES (?, ?, ?, 'reservation.participants.updated', 'reservation', ?, ?, ?)`)
       .bind(crypto.randomUUID(), clubId, auth.userId, reservationId, JSON.stringify({ participantMembershipIds: requestedIds, participantMode }), now),
   );

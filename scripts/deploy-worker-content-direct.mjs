@@ -1,12 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { getCloudflareAccessToken } from "./cloudflare-auth.mjs";
 
 const ACCOUNT_ID = "b519d0c3f8d893d62d2ce70f452f038d";
 const SCRIPT_NAME = "tenissiruch-api";
 const API_ROOT = "https://api.cloudflare.com/client/v4";
-const token = process.env.CLOUDFLARE_API_TOKEN;
-
-if (!token) throw new Error("CLOUDFLARE_API_TOKEN is required.");
+const token = await getCloudflareAccessToken();
 
 const bundlePath = resolve(process.argv[2] || "dist/worker-v2.js");
 const bundle = await readFile(bundlePath);
